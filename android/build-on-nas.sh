@@ -154,7 +154,10 @@ fix_perms() {
     local n
     n="$(find "$ROOT" -type f -user "$(id -un)" ! -perm -u+r 2>/dev/null | grep -vc node_modules || true)"
     if [ "${n:-0}" -gt 0 ]; then
-        find "$ROOT" -type d -user "$(id -un)" ! -perm -u+rx -exec chmod u+rx {} + 2>/dev/null
+        # 目录要 rwx：只给 rx 的话目录不可写，verify_and_collect 里的
+        # `rm -rf $dst` 会失败、旧 APK 删不掉，于是 publish.sh 看到的是旧版本号、
+        # 把新产物跳过 —— 表现为"构建成功但 dist 里没有新 APK"。
+        find "$ROOT" -type d -user "$(id -un)" ! -perm -u+rwx -exec chmod u+rwx {} + 2>/dev/null
         find "$ROOT" -type f -user "$(id -un)" ! -perm -u+r -exec chmod u+rw {} + 2>/dev/null
         say "修复了 $n 个权限为 000 的文件（沙箱里 Edit/sed 改过就会这样）"
     fi
