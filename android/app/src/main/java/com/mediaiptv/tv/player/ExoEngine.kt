@@ -242,6 +242,43 @@ class ExoEngine(
             // 换来第一帧立刻出画 —— 拖动时的观感差别很大。
             setSeekParameters(SeekParameters.CLOSEST_SYNC)
             addAnalyticsListener(object : AnalyticsListener {
+                // ── 音轨能不能播 ──
+                // 1.11.17 起 AV3A(AVS3) 音频没有解码器了（ijk 兼容引擎随商业 SDK 移除）。
+                // 播放器对解不了的音轨是**默默跳过**的：视频照播、音频没有，而且不报错 ——
+                // 用户只会觉得"这个台没声音"，查不出原因。所以这里主动判一次并通知外层提示。
+                // 只提示、不切引擎：已经没有可切的引擎了。
+                override fun onTracksChanged(
+                    eventTime: AnalyticsListener.EventTime,
+                    tracks: androidx.media3.common.Tracks
+                ) {
+                    if (unsupportedAudioNotified) return
+                    var hasAudio = false
+                    var playable = false
+                    var badMime = ""
+                    for (group in tracks.groups) {
+                        if (group.type != androidx.media3.common.C.TRACK_TYPE_AUDIO) continue
+                        hasAudio = true
+                        for (i in 0 until group.length) {
+                            if (group.isTrackSupported(i)) {
+                                playable = true
+                            } else {
+                                val m = group.getTrackFormat(i).sampleMimeType.orEmpty()
+                                if (m.isNotEmpty()) badMime = m
+                            }
+                        }
+                    }
+                    if (hasAudio && !playable) {
+                        unsupportedAudioNotified = true
+                        val label = when {
+                            badMime.contains("av3a") || badMime.contains("avs3") -> "AV3A(AVS3) 音频"
+                            badMime.isNotEmpty() -> badMime.substringAfter('/').uppercase()
+                            else -> "该音轨"
+                        }
+                        android.util.Log.i("ExoAudio", "unsupported audio mime=$badMime → 提示用户")
+                        onUnsupportedAudio?.invoke("$label 本机无法解码：只有画面、没有声音")
+                    }
+                }
+
                 // ── 加载时序诊断 ──
                 // 线上问题：「进时移要等 5~10 秒才出画面，而服务端只用了 88ms」。
                 // 光看应用日志分不清是"应用还没把源交给播放器"还是"播放器自己不发请求"，
@@ -328,36 +365,6 @@ class ExoEngine(
                     decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
                 ) {
                     audioMime = format.sampleMimeType ?: ""
-                    android.util.Log.i("AV3ADBG", "onAudioInputFormatChanged mime=$audioMime")
-                }
-
-                // 无解码器的 mime（audio/av3a）在轨道选择阶段就被判定为不支持，渲染器
-                // 不会启用，onAudioInputFormatChanged 永远不触发，因此在轨道变化时检测：
-                // 存在 av3a 音轨、且没有任何已选可播音轨 -> 通知外层切兼容引擎
-                override fun onTracksChanged(
-                    eventTime: AnalyticsListener.EventTime,
-                    tracks: androidx.media3.common.Tracks
-                ) {
-                    if (av3aNotified) return
-                    var hasAv3a = false
-                    var hasSelectedAudio = false
-                    for (group in tracks.groups) {
-                        if (group.type != androidx.media3.common.C.TRACK_TYPE_AUDIO) continue
-                        for (i in 0 until group.length) {
-                            if (group.getTrackFormat(i).sampleMimeType == Av3aReader.MIME_AV3A) {
-                                hasAv3a = true
-                            }
-                            if (group.isTrackSelected(i)) hasSelectedAudio = true
-                        }
-                    }
-                    android.util.Log.i("AV3ADBG", "onTracksChanged hasAv3a=$hasAv3a selectedAudio=$hasSelectedAudio")
-                    if (hasAv3a && !hasSelectedAudio && !av3aDecoderAvailable) {
-                        av3aNotified = true
-                        android.util.Log.i("AV3ADBG", "av3a track unsupported -> invoke callback")
-                        onUnsupportedAudio?.invoke(
-                            "该频道音轨为 AV3A(AVS3) 音频，本机不支持解码，可尝试其他线路"
-                        )
-                    }
                 }
             })
         }
@@ -370,8 +377,6 @@ class ExoEngine(
 
     /** 当前音频 MIME 类型（如 audio/mp4a-latm） */
     private var audioMime: String = ""
-    /** av3a 不兼容回调只通知一次（通知后外层会销毁本引擎换 ijk） */
-    private var av3aNotified: Boolean = false
 
     /** 当前视频帧率（-1 表示未知） */
     private var videoFrameRate: Float = -1f
@@ -385,27 +390,6 @@ class ExoEngine(
     /** 播放中途卡死回调：连续 [STALL_TIMEOUT_MS] 未正常播放（缓冲不恢复/连接假死/位置冻结）时触发 */
     var onPlaybackStalled: (() -> Unit)? = null
 
-    /** 音轨本机无法解码时触发（如 AVS3 音频无对应解码器），参数为面向用户的提示文案 */
-    var onUnsupportedAudio: ((String) -> Unit)? = null
-
-    /**
-     * 本机是否存在 audio/av3a 解码器（部分国产电视芯片内置AV3A硬解）。
-     * FFmpeg 扩展没有 AVS3 音频解码器，只能依赖平台解码器。
-     *
-     * 这是设备常量，但原实现每次调用都查一遍：OSD 统计行（默认 500ms 一次）与
-     * 每次 onTracksChanged（换台路径）都会走到，而 getDecoderInfos 首次会枚举
-     * MediaCodecList（binder 到 media.codec）。改为 lazy 只查一次。
-     */
-    private val av3aDecoderAvailable: Boolean by lazy {
-        try {
-            MediaCodecUtil.getDecoderInfos(
-                Av3aReader.MIME_AV3A, /* requiresSecureDecoder= */ false, /* requiresTunnelingDecoder= */ false
-            ).isNotEmpty()
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     /** 卡死监测 Handler（主线程轮询） */
     private val stallHandler = Handler(Looper.getMainLooper())
 
@@ -414,6 +398,18 @@ class ExoEngine(
 
     /** 上次观测到的播放位置，用于检测"播放器认为在播但画面冻结" */
     private var lastObservedPositionMs = Long.MIN_VALUE
+
+    /**
+     * 音轨本机无法解码时触发（例如 AV3A / AVS3 音频），参数是给用户看的文案。
+     *
+     * 1.11.17 起 ijk 兼容引擎随商业 SDK 一起移除了，所以这个回调**只用来提示**，
+     * 外层不会再切换引擎。留着它的原因：播放器遇到解不了的音轨会默默跳过（继续播视频），
+     * 用户看到的是"有画无声"却不知道为什么 —— 没有提示就等于坏得不明不白。
+     */
+    var onUnsupportedAudio: ((String) -> Unit)? = null
+
+    /** 同一次播放里只提示一次（换台/重连时由 [resetStreamState] 重置） */
+    private var unsupportedAudioNotified = false
 
     /** 播放位置连续不变的开始时间（0 表示位置在推进） */
     private var positionFrozenSinceMs = 0L
@@ -554,11 +550,10 @@ class ExoEngine(
     /**
      * 清空上一路流遗留的每流状态。引擎实例在换台/换线路/重连时会被复用
      * （MainActivity 对同一实例反复调用 play），不重置会导致 OSD 数据串台、
-     * AV3A 提示锁死、花屏恢复误触发等问题。
+     * 花屏恢复误触发等问题。
      */
     private fun resetStreamState() {
         streamStats.reset()
-        av3aNotified = false
         codecErrorTimes.clear()
         videoDecoderName = ""
         audioDecoderName = ""
@@ -568,12 +563,13 @@ class ExoEngine(
         lastObservedPositionMs = Long.MIN_VALUE
         positionFrozenSinceMs = 0L
         offloadCacheKey = ""
+        // 换台/重连要重新判一次音轨：上一个台提示过"音轨不支持"，新台可能完全正常
+        unsupportedAudioNotified = false
     }
 
     override fun setSource(url: String, headers: Map<String, String>) {
         // 先清掉上一路流遗留的状态。引擎实例会在换台/换线路/重连时被复用，
-        // 不重置会导致：OSD 码率混入旧频道的字节（最长 8 秒）、av3aNotified 永久锁死
-        // （同一实例重播时 AV3A 提示再也不会触发 → 无声且无提示）、
+        // 不重置会导致：OSD 码率混入旧频道的字节（最长 8 秒）、
         // codecErrorTimes 残留旧错误从而误触发"重新解码"恢复。
         resetStreamState()
 
@@ -626,8 +622,9 @@ class ExoEngine(
                     // 播放列表带 CODECS 属性时直接初始化轨道、免下载首个分片，切台起播更快；
                     // 缺少属性时自动回退传统准备方式
                     .setAllowChunklessPreparation(true)
-                    // 自定义 TS 提取：支持 0xD5 AVS3 音频（AV3A），其他容器行为不变
-                    .setExtractorFactory(Av3aHlsExtractorFactory())
+                    // 提取器：Media3 默认（DefaultHlsExtractorFactory）。
+                    // 这里曾挂自定义工厂以识别 0xD5 AVS3 音频（AV3A），随 ijkplayer 与
+                    // 商业 SDK 一并移除；普通 TS/fMP4/ADTS 分片行为与之前完全一致。
                     .createMediaSource(mediaItem)
             else ->
                 androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataSourceFactory)
@@ -773,8 +770,6 @@ class ExoEngine(
             val canPassthrough = audioPassthrough &&
                 (m.contains("ac3") || m.contains("dts") || m.contains("truehd"))
             val modeText = when {
-                // av3a 但本机无解码器：直接标注"不支持"
-                m.contains("av3a") && !av3aDecoderAvailable -> "不支持"
                 canPassthrough -> "直通"
                 audioOffloadActive() -> "音频硬解"
                 audioDecoderName.isEmpty() -> ""
@@ -857,7 +852,6 @@ class ExoEngine(
         listener = null
         onVideoCodecErrorBurst = null
         onPlaybackStalled = null
-        onUnsupportedAudio = null
         playerView.player = null
         player.release() // release() 内部已包含 stop()
     }

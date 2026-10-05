@@ -49,7 +49,6 @@
     <string name="settings_engine">播放内核</string>
     <string name="settings_engine_exo">ExoPlayer（推荐）</string>
     <string name="settings_engine_system">系统播放器</string>
-    <string name="settings_engine_ijk">IJK 兼容（AV3A）</string>
     <string name="settings_group_play">播放</string>
     <string name="settings_group_picture">画面</string>
     <string name="settings_group_network">网络</string>

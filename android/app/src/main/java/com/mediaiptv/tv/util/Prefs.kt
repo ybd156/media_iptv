@@ -15,7 +15,7 @@ object Prefs {
     private const val KEY_TOKEN = "token"
     private const val KEY_DEVICE_ID = "device_id"
     private const val KEY_SERVER_URL = "server_url"
-    private const val KEY_ENGINE = "engine"            // "exo" | "system" | "ijk"
+    private const val KEY_ENGINE = "engine"            // "exo" | "system"
     private const val KEY_BUFFER_LEVEL = "buffer_level" // 0=低 1=中 2=高
     private const val KEY_SCALE_MODE = "scale_mode"    // "fit"|"fill"|"zoom"
     private const val KEY_AUTOSTART = "autostart"
@@ -27,7 +27,6 @@ object Prefs {
     private const val KEY_SWITCH_TIMEOUT = "switch_timeout_sec" // 换源等待秒数
     private const val KEY_LAST_CHANNEL = "last_channel_id"      // 频道记忆：上次观看的频道
     private const val KEY_LAST_PLAY_URL = "last_play_url"       // 上次成功播放的地址（冷启动预热连接）
-    private const val KEY_AV3A_SOURCES = "av3a_sources"         // 需要 AV3A 兼容引擎(ijk)的线路集合："channelId:sourceId"
     private const val KEY_AUDIO_PASSTHROUGH = "audio_passthrough" // 音频直通
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"       // 播放时强制不息屏
     private const val KEY_OSD_STATS = "osd_stats"                 // 是否显示 OSD 底部统计行
@@ -52,7 +51,6 @@ object Prefs {
 
     const val ENGINE_EXO = "exo"
     const val ENGINE_SYSTEM = "system"
-    const val ENGINE_IJK = "ijk"      // IJK 兼容引擎（内置 AV3A 等解码器，可手动强制使用）
 
     const val SCALE_FIT = "fit"
     const val SCALE_FILL = "fill"
@@ -322,35 +320,6 @@ object Prefs {
 
     fun setLastPlayUrl(context: Context, url: String) {
         prefs(context).edit().putString(KEY_LAST_PLAY_URL, url).apply()
-    }
-
-    // -------- AV3A 线路记忆 --------
-    // 某条线路一旦被判定音轨需要 AV3A 兼容引擎(ijk)，就记下来；下次播同线路直接起 ijk，
-    // 省掉"先建 ExoPlayer → 解析出 av3a → 推翻重建 ijk"这一整轮（实测约 3–4s）。
-
-    private fun av3aKey(channelId: Int, sourceId: Int) = "$channelId:$sourceId"
-
-    fun isAv3aSource(context: Context, channelId: Int, sourceId: Int): Boolean {
-        if (channelId <= 0 || sourceId <= 0) return false
-        return prefs(context).getStringSet(KEY_AV3A_SOURCES, emptySet())
-            ?.contains(av3aKey(channelId, sourceId)) == true
-    }
-
-    fun markAv3aSource(context: Context, channelId: Int, sourceId: Int) {
-        if (channelId <= 0 || sourceId <= 0) return
-        val p = prefs(context)
-        // getStringSet 返回的集合不可直接改，需拷贝
-        val cur = p.getStringSet(KEY_AV3A_SOURCES, emptySet())?.toMutableSet() ?: mutableSetOf()
-        if (cur.add(av3aKey(channelId, sourceId))) {
-            p.edit().putStringSet(KEY_AV3A_SOURCES, cur).apply()
-        }
-    }
-
-    /** 冷启动：上次观看的线路是否已知需要 AV3A 兼容引擎 */
-    fun isLastSourceAv3a(context: Context): Boolean {
-        val cid = getLastChannelId(context)
-        if (cid <= 0) return false
-        return isAv3aSource(context, cid, getPreferredSource(context, cid))
     }
 
     // -------- 音频直通（passthrough）：AC3/E-AC3/DTS 原样送 HDMI 由电视/功放解码 --------

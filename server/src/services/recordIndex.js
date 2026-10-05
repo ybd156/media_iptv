@@ -4,30 +4,28 @@
  * 录像文件的「关键帧切片索引」。
  *
  * 为什么需要它：
- *   录像分片是 **300 秒一片、100~200MB** 的整文件（用户设置 recordSegmentMin=5）。
- *   时移/回看如果直接拿整片当 HLS 分片、或直接播原文件：
- *     - 播放器为了拿到"直播边缘"要从分片开头读起（TS 没有索引），一次就是几十上百 MB；
- *     - 每次 seek（拖进度条）都要从文件开头重新读，局域网上也是几秒的卡顿。
- *   线上反馈的「时移和回看拉流会卡、拉进度条不流畅」就是这个粒度问题。
+ *   录像分片是**整文件**（默认 300 秒、100~200MB）。时移/回看如果直接拿整片当 HLS 分片、
+ *   或直接播原文件：播放器为了拿"直播边缘"要从分片开头读起（TS 没有索引），一次就是几十上百 MB；
+ *   每次 seek 也要从文件开头重读。所以按**关键帧**把它切成字节范围小块
+ *   （`#EXT-X-BYTERANGE`），一次 seek 只取一小块（10 秒 ≈ 6MB），局域网上几十毫秒。
  *
- * 做法：
- *   把每个录像文件按**关键帧**切成字节范围小块（源的关键帧实测 10 秒一个，
- *   GOP 未显式配置，所以这里以实测关键帧为准），播放列表里用
- *   `#EXT-X-BYTERANGE:<长度>@<偏移>` 指向同一个 `/stream/record/:id`，
- *   一次 seek 只取一小块（10 秒 ≈ 6MB），LAN 上几十毫秒。
+ * 1.11.17 的架构改动：**扫描全部改成异步**。
  *
- * 关键取舍：
- *   - **只放"已写完"的切片**：最后一片还在写，长度会变；放进播放列表会让播放器
- *     拿着旧长度当"已完整"，等下一次刷新时又把新字节当新分片，轻则跳内容重则卡住。
- *     代价是直播边缘最多落后一个关键帧间隔（10 秒）—— 时移本来就是回看缓冲区，
- *     这个代价可以接受（"回到直播"走的是直连，不受影响）。
- *   - 索引**按文件缓存**：已写完的文件（size 不变）可以长期复用；还在录的文件
- *     最多 4 秒重扫一次，且至少长了 1.5MB 才值得重扫（ffprobe 全量扫 200MB 约 0.45s）。
+ *   原先用 spawnSync 调 ffprobe，单次扫 200MB 约 0.45 秒，而这 0.45 秒里
+ *   **整个 Node 事件循环是停住的** —— 同一时刻所有客户端请求（心跳、EPG、别的频道的分片）
+ *   一起卡住。线上日志里 `index.m3u8` 出现过 2.7 秒的响应，就是几次扫描叠在一起。
+ *   现在改成 spawn + Promise：等待扫描时事件循环照常服务其他请求，代价只是
+ *   "这一个请求多等一会儿"，而不是"所有人都多等"。
+ *
+ *   并发去重：同一个文件的扫描只会跑一次，多个请求同时要同一份索引时共享同一个 Promise。
+ *
+ * 索引仍然按文件缓存：已写完的文件（size 不变）长期复用并落盘；还在录的文件最多
+ * [OPEN_TTL_MS] 重扫一次，且至少长了 [OPEN_RESCAN_BYTES] 才值得重扫。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const config = require('../config');
 const logger = require('../logger');
 
@@ -41,8 +39,14 @@ const OPEN_TTL_MS = 6_000;
 /** 还在录的文件至少长了这么多字节才重扫（约 2 秒内容） */
 const OPEN_RESCAN_BYTES = 1_500_000;
 const CACHE_MAX = 128;
+/** ffprobe 输出上限：200MB 的 TS 关键帧表约几 MB，64MB 是安全余量 */
+const MAX_OUTPUT = 64 * 1024 * 1024;
+const SCAN_TIMEOUT_MS = 30_000;
 
 let ffprobeBin; // undefined=未探测, null=没有
+
+/** 正在扫描的文件 key -> Promise，避免同一个文件被并发扫多次 */
+const inflight = new Map();
 
 /* ------------------------------------------------------------------ *
  * 落盘索引：服务器重启后不用把窗口里 24 个分片（每个 200MB）重扫一遍。
@@ -98,6 +102,7 @@ function hydrateFromStore(file, st) {
 /** 探测 ffprobe：优先 PATH，其次与 ffmpeg 同目录 */
 function detectFfprobe() {
   if (ffprobeBin !== undefined) return ffprobeBin;
+  const { spawnSync } = require('child_process');
   const candidates = [];
   if (process.env.FFPROBE_PATH) candidates.push(process.env.FFPROBE_PATH);
   for (const cmd of ['which', 'where']) {
@@ -122,26 +127,64 @@ function detectFfprobe() {
   return ffprobeBin;
 }
 
-/** 扫一遍视频关键帧：返回按**字节顺序**排列的 [{ t, pos }]（t=秒，pos=字节偏移） */
-function scanKeyframes(file) {
+/**
+ * 跑一个外部命令并把输出收全（异步）。
+ * @returns {Promise<{code:number,out:string}|null>} null 表示超时或启动失败
+ */
+function runCapture(bin, args, { timeout = SCAN_TIMEOUT_MS, maxOutput = MAX_OUTPUT } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let out = '';
+    let truncated = false;
+    let proc;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    let timer;
+    try {
+      proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch (_) {
+      return finish(null);
+    }
+    timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch (_) { /* 忽略 */ }
+      finish(null);
+    }, timeout);
+    if (timer.unref) timer.unref();
+
+    proc.stdout.on('data', (d) => {
+      if (truncated) return;
+      out += d;
+      if (out.length > maxOutput) { truncated = true; out = ''; }
+    });
+    proc.on('error', () => finish(null));
+    proc.on('close', (code) => {
+      if (truncated) return finish(null);
+      finish(code === 0 && out ? { code, out } : null);
+    });
+  });
+}
+
+/**
+ * 扫一遍视频关键帧（异步）。
+ * @returns {Promise<Array<{t:number,pos:number}>|null>} 按**字节顺序**排列
+ */
+async function scanKeyframes(file) {
   const bin = detectFfprobe();
   if (!bin) return null;
-  let r;
-  try {
-    r = spawnSync(bin, [
-      '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'packet=pts_time,pos,flags',
-      '-of', 'csv=p=0',
-      file,
-    ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
-  } catch (e) {
-    logger.warn(`[recordIndex] ffprobe 扫描失败 ${file}: ${e.message}`);
-    return null;
-  }
-  if (r.status !== 0 || !r.stdout) return null;
+  const r = await runCapture(bin, [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'packet=pts_time,pos,flags',
+    '-of', 'csv=p=0',
+    file,
+  ]);
+  if (!r) return null;
   const kf = [];
-  for (const line of r.stdout.split('\n')) {
+  for (const line of r.out.split('\n')) {
     // 输出形如 `31511.520000,564,K__,`（末尾还有一个空字段）
     const parts = line.trim().split(',');
     if (parts.length < 3) continue;
@@ -158,16 +201,15 @@ function scanKeyframes(file) {
 }
 
 /** 文件总时长（秒）；拿不到返回 0 */
-function fileDuration(file) {
+async function fileDuration(file) {
   const bin = detectFfprobe();
   if (!bin) return 0;
-  try {
-    const r = spawnSync(bin, [
-      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file,
-    ], { encoding: 'utf8', timeout: 15_000 });
-    const d = parseFloat((r.stdout || '').trim());
-    return Number.isFinite(d) && d > 0 ? d : 0;
-  } catch (_) { return 0; }
+  const r = await runCapture(bin, [
+    '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file,
+  ], { timeout: 15_000 });
+  if (!r) return 0;
+  const d = parseFloat((r.out || '').trim());
+  return Number.isFinite(d) && d > 0 ? d : 0;
 }
 
 function evictIfNeeded() {
@@ -177,15 +219,19 @@ function evictIfNeeded() {
 }
 
 /**
- * 取一个录像文件的切片表。
+ * 取一个录像文件的切片表（异步）。
+ *
+ * 缓存命中直接返回；未命中才真的跑 ffprobe，且**同一个文件的并发请求共享同一次扫描**。
+ *
  * @param {string} file 绝对路径
  * @param {boolean} closed 文件是否已写完（写完的最后一片长度才确定，可以放进播放列表）
- * @returns {Array<{offset:number,length:number,duration:number,tRel:number}>}
+ * @returns {Promise<Array<{offset:number,length:number,duration:number,tRel:number}>>}
  *          tRel = 该片起点相对文件第一个关键帧的秒数（调用方用它换算绝对时间）
  */
-function chunksOf(file, closed) {
+async function chunksOf(file, closed) {
   let st;
   try { st = fs.statSync(file); } catch (_) { return []; }
+
   const hit = cache.get(file);
   if (hit && hit.closed === !!closed) {
     const fresh = closed
@@ -198,38 +244,51 @@ function chunksOf(file, closed) {
     if (saved) return saved;
   }
 
-  const kf = scanKeyframes(file);
-  if (!kf || !kf.length) {
-    // 扫不出关键帧（非 TS / 没有视频轨）：退回"整文件一片"，至少不崩
-    const chunks = st.size > 0 ? [{ offset: 0, length: st.size, duration: 0, tRel: 0 }] : [];
+  const key = `${file}|${closed ? 1 : 0}|${st.size}`;
+  const running = inflight.get(key);
+  if (running) return running;
+
+  const job = (async () => {
+    const kf = await scanKeyframes(file);
+    if (!kf || !kf.length) {
+      // 扫不出关键帧（非 TS / 没有视频轨）：退回"整文件一片"，至少不崩
+      const chunks = st.size > 0 ? [{ offset: 0, length: st.size, duration: 0, tRel: 0 }] : [];
+      cache.set(file, { at: Date.now(), size: st.size, closed: !!closed, chunks });
+      evictIfNeeded();
+      return chunks;
+    }
+    const dur = await fileDuration(file);
+    const t0 = kf[0].t;
+    const chunks = [];
+    for (let i = 0; i < kf.length; i++) {
+      const isLast = i + 1 >= kf.length;
+      if (isLast && !closed) break; // 还在写的最后一片：长度未定，不放进去
+      const offset = kf[i].pos;
+      const end = isLast ? st.size : kf[i + 1].pos;
+      const length = end - offset;
+      if (length <= 0) continue;
+      const tRel = kf[i].t - t0;
+      const duration = isLast
+        ? Math.max(0.5, (dur || (kf[i].t - t0 + CHUNK_SECONDS)) - tRel)
+        : kf[i + 1].t - kf[i].t;
+      chunks.push({ offset, length, duration, tRel });
+    }
     cache.set(file, { at: Date.now(), size: st.size, closed: !!closed, chunks });
     evictIfNeeded();
+    if (closed) {
+      // 已写完的分片：索引落盘，服务器重启后不用重扫
+      loadStore()[file] = { size: st.size, mtime: st.mtimeMs, at: Date.now(), chunks };
+      scheduleSave();
+    }
     return chunks;
+  })();
+
+  inflight.set(key, job);
+  try {
+    return await job;
+  } finally {
+    inflight.delete(key);
   }
-  const dur = fileDuration(file);
-  const t0 = kf[0].t;
-  const chunks = [];
-  for (let i = 0; i < kf.length; i++) {
-    const isLast = i + 1 >= kf.length;
-    if (isLast && !closed) break; // 还在写的最后一片：长度未定，不放进去
-    const offset = kf[i].pos;
-    const end = isLast ? st.size : kf[i + 1].pos;
-    const length = end - offset;
-    if (length <= 0) continue;
-    const tRel = kf[i].t - t0;
-    const duration = isLast
-      ? Math.max(0.5, (dur || (kf[i].t - t0 + CHUNK_SECONDS)) - tRel)
-      : kf[i + 1].t - kf[i].t;
-    chunks.push({ offset, length, duration, tRel });
-  }
-  cache.set(file, { at: Date.now(), size: st.size, closed: !!closed, chunks });
-  evictIfNeeded();
-  if (closed) {
-    // 已写完的分片：索引落盘，服务器重启后不用重扫
-    loadStore()[file] = { size: st.size, mtime: st.mtimeMs, at: Date.now(), chunks };
-    scheduleSave();
-  }
-  return chunks;
 }
 
 /**
@@ -237,10 +296,10 @@ function chunksOf(file, closed) {
  * 播放器因此能精确 seek（一次只取一小块），也能立刻知道总时长。
  * @param {string} file 绝对路径
  * @param {string} chunkUrl 分片地址（含签名），所有切片共用它 + 字节范围
- * @returns {string|null}
+ * @returns {Promise<string|null>}
  */
-function vodPlaylist(file, chunkUrl) {
-  const chunks = chunksOf(file, true);
+async function vodPlaylist(file, chunkUrl) {
+  const chunks = await chunksOf(file, true);
   if (!chunks.length) return null;
   const maxDur = chunks.reduce((m, c) => Math.max(m, c.duration), 0);
   const out = [
@@ -290,6 +349,7 @@ function hasIndex(file) {
 const warmQueue = [];
 let warmRunning = false;
 const WARM_GAP_MS = 600;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function warm(files) {
   for (const f of files) {
@@ -298,13 +358,14 @@ function warm(files) {
   }
   if (warmRunning) return;
   warmRunning = true;
-  const step = () => {
-    const file = warmQueue.shift();
-    if (!file) { warmRunning = false; return; }
-    try { chunksOf(file, true); } catch (_) { /* 扫不到就算了 */ }
-    setTimeout(step, WARM_GAP_MS);
-  };
-  setTimeout(step, 0);
+  (async () => {
+    while (warmQueue.length) {
+      const file = warmQueue.shift();
+      try { await chunksOf(file, true); } catch (_) { /* 扫不到就算了 */ }
+      await sleep(WARM_GAP_MS);
+    }
+    warmRunning = false;
+  })();
 }
 
-module.exports = { chunksOf, peek, warm, vodPlaylist, clearCache, CHUNK_SECONDS };
+module.exports = { chunksOf, peek, warm, vodPlaylist, clearCache, hasIndex, CHUNK_SECONDS, OPEN_TTL_MS };

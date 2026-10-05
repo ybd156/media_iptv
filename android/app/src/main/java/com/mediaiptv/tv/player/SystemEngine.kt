@@ -147,7 +147,7 @@ class SystemEngine(private val context: Context) : PlayerEngine {
      *   3. 于是 fit/fill/zoom/169 四种模式渲染结果完全一样。
      *
      * 正确做法是改变 SurfaceView 的布局尺寸（缓冲区保持原始分辨率，由 SurfaceView
-     * 负责缩放到该尺寸），这也是 IjkEngine.AspectSurfaceView 采用的方式。
+     * 负责缩放到该尺寸）。
      */
     private fun applyScaleMode() {
         if (videoWidth <= 0 || videoHeight <= 0) return

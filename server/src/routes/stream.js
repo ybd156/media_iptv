@@ -77,7 +77,7 @@ module.exports = function streamRoutes(db) {
     pipeUpstream(url, req, res, headers);
   });
 
-  // ---------- 时移（滚动 HLS）----------
+  // ---------- 时移（录像时间轴）----------
   // 签名放在**路径**里而不是查询串：m3u8 里的分片是相对路径，相对解析只保留路径前缀、
   // 查询串会丢，那样分片请求就带不上签名了。放路径里则自动跟着分片一起传下去。
   const timeshift = require('../services/timeshift');
@@ -89,43 +89,37 @@ module.exports = function streamRoutes(db) {
     return res.status(403).json({ code: 403, msg: '时移地址签名无效或已过期，请重新获取频道列表', data: null });
   };
 
-  // 播放列表：第一次请求会拉起 ffmpeg，之后每次请求刷新空闲计时
-  router.get('/timeshift/:channelUrlId/:t/:s/index.m3u8', timeshiftAuth, (req, res) => {
+  /**
+   * 时移播放列表。
+   *
+   * 1.11.17 起时移就是「录像窗口」：这里按录像分片动态生成列表，分片本身走
+   * `/stream/record/:id`（带 Range），所以**只剩这一个路由** —— 旧版还有一个
+   * `/timeshift/.../:seg` 的分片路由，那是给 ffmpeg 滚动窗口用的，已随
+   * 「不再为时移单独跑 ffmpeg」一起删掉。
+   */
+  router.get('/timeshift/:channelUrlId/:t/:s/index.m3u8', timeshiftAuth, async (req, res) => {
     const id = parseInt(req.params.channelUrlId, 10);
-    const session = timeshift.ensureSession(db, id);
-    if (!session) {
-      return res.status(503).json({ code: 503, msg: '时移不可用（线路不存在，或系统没有 ffmpeg）', data: null });
-    }
-    // 录像共用模式：播放列表是按需生成的文本，不落盘
-    const base = `${req.protocol}://${req.headers.host}`;
-    const text = timeshift.recordPlaylistText(db, id, base);
-    if (text !== null) {
+    try {
+      const session = await timeshift.ensureSession(db, id);
+      if (!session) {
+        // 这个频道没有可用录像。客户端本来就不该拿到时移地址（服务端只对有录像任务的
+        // 频道下发），所以这属于正常情况：地址过期、或录像刚被删掉。
+        return res.status(503).json({ code: 503, msg: '这个频道没有可用的录像，时移不可用', data: null });
+      }
+      const base = `${req.protocol}://${req.headers.host}`;
+      const text = await timeshift.recordPlaylistText(db, id, base);
+      if (text === null) {
+        // 窗口里还没有分片（刚开录像 / 分片刚被清理）。返回 503 让播放器稍后重试，
+        // 比返回一个空列表好 —— 空列表会让 ExoPlayer 直接判定流结束。
+        return res.status(503).json({ code: 503, msg: '时移窗口正在建立，请稍候', data: null });
+      }
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Cache-Control', 'no-store');
-      return res.send(text);
+      res.send(text);
+    } catch (e) {
+      logger.error(`[timeshift] #${id} 生成播放列表失败：${e.message}`);
+      if (!res.headersSent) res.status(500).json({ code: 500, msg: '时移播放列表生成失败', data: null });
     }
-    const file = timeshift.playlistPath(id);
-    if (!file) {
-      // ffmpeg 刚起来还没吐出第一个分片。返回 503 让播放器稍后重试，
-      // 比返回一个空列表好 —— 空列表会让 ExoPlayer 直接判定流结束。
-      return res.status(503).json({ code: 503, msg: '时移缓冲正在建立，请稍候', data: null });
-    }
-    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-    res.setHeader('Cache-Control', 'no-store');
-    fs.createReadStream(file).pipe(res);
-  });
-
-  // 分片：名字走白名单（seg00001.ts），挡住目录穿越
-  router.get('/timeshift/:channelUrlId/:t/:s/:seg', timeshiftAuth, (req, res) => {
-    const id = parseInt(req.params.channelUrlId, 10);
-    // 分片请求也算「有人在看」；顺带把可能已经退出的会话拉回来
-    timeshift.ensureSession(db, id);
-    const file = timeshift.segmentPath(id, req.params.seg);
-    if (!file) return res.status(404).end();
-    res.setHeader('Content-Type', 'video/mp2t');
-    // 分片内容不会变，但会被 ffmpeg 删掉，所以缓存时间给短一点
-    res.setHeader('Cache-Control', 'public, max-age=60');
-    fs.createReadStream(file).pipe(res);
   });
 
   // 回看：整段录像的 VOD 播放列表（按关键帧切成字节范围小块）。
@@ -133,7 +127,7 @@ module.exports = function streamRoutes(db) {
   //   - 每次 seek 都要从文件开头重读（TS 没有索引），局域网上也是几秒的卡顿；
   //   - 时间轴只能靠播放器二分搜索猜，"拖进度条不流畅"就是这么来的。
   // 换成切片列表后，一次 seek 只取一小块（10 秒 ≈ 6MB），而且总时长是确定的。
-  router.get('/record/:id/index.m3u8', streamAuth.middleware('record'), (req, res) => {
+  router.get('/record/:id/index.m3u8', streamAuth.middleware('record'), async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const row = db.prepare('SELECT file FROM recordings WHERE id = ?').get(id);
     if (!row) {
@@ -147,14 +141,20 @@ module.exports = function streamRoutes(db) {
       return res.status(404).json({ code: 404, msg: 'file missing on disk', data: null });
     }
     const base = `${req.protocol}://${req.headers.host}`;
-    const text = recordIndex.vodPlaylist(full, `${base}/stream/record/${id}?${streamAuth.query('record', id)}`);
-    if (!text) {
-      // 索引拿不到（没 ffprobe / 文件还没有关键帧）：让客户端自己退避重试
-      return res.status(503).json({ code: 503, msg: '回看切片索引还没准备好', data: null });
+    try {
+      // 索引可能还没建：这里会等一次 ffprobe（异步，不阻塞其他请求）
+      const text = await recordIndex.vodPlaylist(full, `${base}/stream/record/${id}?${streamAuth.query('record', id)}`);
+      if (!text) {
+        // 索引拿不到（没 ffprobe / 文件还没有关键帧）：让客户端自己退避重试
+        return res.status(503).json({ code: 503, msg: '回看切片索引还没准备好', data: null });
+      }
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(text);
+    } catch (e) {
+      logger.error(`[record] #${id} 生成回看播放列表失败：${e.message}`);
+      if (!res.headersSent) res.status(500).json({ code: 500, msg: '回看播放列表生成失败', data: null });
     }
-    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(text);
   });
 
   router.get('/record/:id', streamAuth.middleware('record'), (req, res) => {

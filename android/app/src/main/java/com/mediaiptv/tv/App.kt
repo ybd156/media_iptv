@@ -28,9 +28,9 @@ class App : Application() {
      * ExoEngine 构造时需同步调用 FfmpegLibrary.isAvailable() 决定扩展渲染器模式，
      * 该调用会 System.loadLibrary 加载数 MB 的 .so；放在主线程会阻塞起播路径。
      *
-     * 同理，ijk 兼容引擎的 5 个库（libwsrtcsdk 5.5MB + libijkffmpeg 8MB + libRtsSDK 2.2MB …）
-     * 合计约 16MB，原先是在首次 AV3A 换台时于主线程 loadLibrary，直接卡在用户等待的
-     * 换台路径上。这里一并提前加载（loadLibrariesOnce 内部幂等）。
+     * 现在这是唯一的 native 依赖：ijkplayer 及其商业 SDK 的 5 个 .so
+     * （libwsrtcsdk + libijkffmpeg + libRtsSDK … 合计约 16MB）已随兼容引擎一并移除，
+     * 原先"在首次 AV3A 换台时于主线程 loadLibrary"的卡顿路径不复存在。
      */
     private fun preloadFfmpeg() {
         Thread({
@@ -38,11 +38,6 @@ class App : Application() {
                 androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable()
             } catch (_: Throwable) {
                 // 扩展不可用：引擎自动退化为纯平台解码
-            }
-            try {
-                tv.danmaku.ijk.media.player.IjkMediaPlayer.loadLibrariesOnce(null)
-            } catch (_: Throwable) {
-                // ijk 库不可用：手动切到 ijk 引擎时会退化为 Exo/系统引擎
             }
         }, "native-preload").start()
     }

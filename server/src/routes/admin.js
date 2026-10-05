@@ -760,8 +760,14 @@ module.exports = function adminRoutes(db) {
       timeshift: {
         enabled: setting('timeshift') === '1',
         windowMin: timeshiftSvc.windowMinutes(db),
-        segmentSeconds: timeshiftSvc.SEGMENT_SECONDS,
-        ffmpegAvailable: !!ffmpeg,
+        // 1.11.17 起时移就是「录像窗口」：决定时移可用性的是录像，不再是 ffmpeg。
+        // 这里给出录像分片长度，方便对照「刚开录像的频道要等多久才有历史」。
+        recordSegmentMin: (() => {
+          try {
+            const v = parseInt(String(setting('recordSegmentMin') || '').replace(/^"|"$/g, ''), 10);
+            return Number.isFinite(v) && v >= 1 && v <= 720 ? v : 5;
+          } catch (_) { return 5; }
+        })(),
         activeSessions: timeshiftSvc.status(),
       },
       stream: {
@@ -785,13 +791,18 @@ module.exports = function adminRoutes(db) {
   // ---------- 时移 ----------
   const timeshift = require('../services/timeshift');
 
-  /** 时移状态：开关、窗口、正在跑的会话（便于确认「到底有没有在缓冲」） */
+  /** 时移状态：开关、窗口、正在用时移的频道 */
   router.get('/timeshift', (req, res) => {
+    let segmentMin = 5;
+    try {
+      const v = parseInt(String((db.prepare("SELECT value FROM settings WHERE key='recordSegmentMin'").get() || {}).value || '').replace(/^"|"$/g, ''), 10);
+      if (Number.isFinite(v) && v >= 1 && v <= 720) segmentMin = v;
+    } catch (_) { /* 用默认 */ }
     ok(res, {
       enabled: String((db.prepare("SELECT value FROM settings WHERE key='timeshift'").get() || {}).value || '').replace(/^"|"$/g, '') === '1',
       windowMin: timeshift.windowMinutes(db),
-      segmentSeconds: timeshift.SEGMENT_SECONDS,
-      ffmpegAvailable: !!timeshift.detectFfmpeg(),
+      // 时移 = 录像窗口：这里给的是**录像分片长度**（决定刚开录像的频道等多久才有历史）
+      recordSegmentMin: segmentMin,
       sessions: timeshift.status(),
     });
   });

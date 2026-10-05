@@ -23,7 +23,6 @@ import com.mediaiptv.tv.model.Program
 import com.mediaiptv.tv.net.ApiClient
 import com.mediaiptv.tv.net.Repository
 import com.mediaiptv.tv.player.ExoEngine
-import com.mediaiptv.tv.player.IjkEngine
 import com.mediaiptv.tv.player.PlayerEngine
 import com.mediaiptv.tv.player.PlayerEngineFactory
 import com.mediaiptv.tv.ui.adapter.ChannelAdapter
@@ -264,9 +263,6 @@ class MainActivity : AppCompatActivity() {
     /** 本次频道内已自动换源次数（达到线路数即停止，避免死循环） */
     private var autoSwitchAttempts = 0
 
-    /** 当前频道是否已尝试过 ijk 兼容引擎回退（防止 AV3A 回调重复触发） */
-    private var ijkFallbackTried = false
-
     // ----- 持续花屏自动恢复 -----
     /** 已执行的恢复级别：0=未恢复 1=已重新解码 2=已切换软硬解 3=已换线路（逐级升级，onReady 后归零） */
     private var recoveryLevel = 0
@@ -340,11 +336,7 @@ class MainActivity : AppCompatActivity() {
         // 协程的 Main 续体排在主线程队列之后，引擎必然先于起播就绪。
         startRegistrationFlow()
         warmUpStreamConnection()
-        // 冷启动：上次观看的线路若已知需要 AV3A 兼容引擎，直接起 ijk，
-        // 省掉"ExoPlayer 构建 → 解析出 av3a → 推翻重建 ijk"这一整轮（实测该路径多花约 3–4s）
-        setupEngine(
-            useIjk = Prefs.getEngine(this) == Prefs.ENGINE_EXO && Prefs.isLastSourceAv3a(this)
-        )
+        setupEngine()
         // 设置页切换画面比例 → 立即作用于当前引擎
         onScaleModeChanged = { mode -> engine?.setScaleMode(mode) }
 
@@ -520,10 +512,8 @@ class MainActivity : AppCompatActivity() {
         binding.rvEpg.adapter = epgAdapter
     }
 
-    /**
-     * @param useIjk true 时使用内置 av3a 解码器的 ijk 兼容引擎（AV3A 频道自动回退）
-     */
-    private fun setupEngine(useIjk: Boolean = false) {
+    /** 按当前设置（引擎 / 解码模式 / 缓冲 / 直通 / 直播偏移）重建播放引擎 */
+    private fun setupEngine() {
         releaseEngine()
         // 同步快照，避免 applyEngineConfig 误判
         lastEngineSnapshot = EngineSnapshot(
@@ -538,7 +528,7 @@ class MainActivity : AppCompatActivity() {
             Prefs.getAudioPassthrough(this),
             Prefs.getLiveOffsetMs(this)
         )
-        engine = if (useIjk) IjkEngine(this) else PlayerEngineFactory.create(this)
+        engine = PlayerEngineFactory.create(this)
         // 将引擎提供的渲染视图注入容器
         binding.playerContainer.removeAllViews()
         binding.playerContainer.addView(engine?.view)
@@ -546,20 +536,13 @@ class MainActivity : AppCompatActivity() {
         (engine as? ExoEngine)?.onVideoCodecErrorBurst = { handleVideoCodecErrorBurst() }
         // 播放中途卡死（缓冲不恢复/连接假死）→ 自动重新拉流
         (engine as? ExoEngine)?.onPlaybackStalled = { handlePlaybackStalled() }
-        // 音轨本机无法解码（AV3A/AVS3）→ 自动切换内置 av3a 解码器的 ijk 兼容引擎；
-        // 兼容引擎也失败（已尝试过）才仅提示
+        // 音轨本机解不了（例如 AV3A / AVS3 音频）：**只能提示**。
+        // 1.11.17 起 ijk 兼容引擎随商业 SDK 一起移除了，没有可切的后备引擎。
+        // 这条提示不能省：播放器对解不了的音轨是静默跳过的（视频照播、音频没有、也不报错），
+        // 不提示的话用户只会觉得"这个台坏了"，连原因都猜不到。
         (engine as? ExoEngine)?.onUnsupportedAudio = { msg ->
-            // 记住该线路需要 AV3A 兼容引擎：下次播放同线路直接起 ijk，省一轮重建
-            markCurrentSourceAsAv3a()
-            if (!ijkFallbackTried) {
-                ijkFallbackTried = true
-                android.util.Log.i("AV3ADBG", "switch to ijk engine")
-                showStatus("AV3A 音轨，正在切换兼容解码引擎…")
-                setupEngine(useIjk = true)
-                if (currentUrl.isNotEmpty()) playCurrentSource()
-            } else {
-                showStatusTemp(msg)
-            }
+            Log.i(TAG_TS, "音轨不支持：$msg")
+            showStatusTemp(msg)
         }
         engine?.listener = object : PlayerEngine.Listener {
             override fun onReady() {
@@ -1153,9 +1136,6 @@ class MainActivity : AppCompatActivity() {
         if (channel.urls.isEmpty()) return
         // 换台：旧频道的时移窗口不再需要，别让它继续占着 ffmpeg
         cancelTimeshiftWarmup()
-        // 新频道：重新允许 AV3A 兼容引擎回退。
-        // 是否切回默认引擎/直接起 ijk 由 playCurrentSource → ensureEngineForSource 按线路记忆决定
-        ijkFallbackTried = false
         timeshiftWarmup = 0
         timeshiftEngaged = false
         pendingTimeshiftBackMs = 0L
@@ -1206,7 +1186,6 @@ class MainActivity : AppCompatActivity() {
         val ch = currentChannel ?: return
         if (currentSourceIndex >= ch.urls.size) return
         val src = ch.urls[currentSourceIndex]
-        ensureEngineForSource(ch.id, src.id)
         val headers = if (src.userAgent.isNotEmpty()) mapOf("User-Agent" to src.userAgent) else emptyMap()
         playbackActive = true
 
@@ -1309,34 +1288,6 @@ class MainActivity : AppCompatActivity() {
         })
         // 续期：服务端空闲 2 分钟就停会话，用户看几分钟再往回拖时窗口还得在
         mainHandler.postDelayed(timeshiftWarmRunnable, TIMESHIFT_WARM_KEEPALIVE_MS)
-    }
-
-    /**
-     * 按线路记忆选择引擎：曾判定需要 AV3A 兼容引擎的线路直接起 ijk，
-     * 省掉"先建 ExoPlayer → 解析出 av3a → 推翻重建 ijk"这一整轮；
-     * 回到普通线路时再切回默认引擎。仅在默认 Exo 内核下生效（用户选系统内核时不干预）。
-     *
-     * 切回默认引擎多加 [ijkFallbackTried] 判断：AV3A 回退若未成功记住线路
-     * （例如 currentChannel 为空），不至于来回重建造成循环。
-     */
-    private fun ensureEngineForSource(channelId: Int, sourceId: Int) {
-        if (Prefs.getEngine(this) != Prefs.ENGINE_EXO) return
-        if (Prefs.isAv3aSource(this, channelId, sourceId)) {
-            if (engine !is IjkEngine) {
-                ijkFallbackTried = true
-                setupEngine(useIjk = true)
-            }
-        } else if (engine is IjkEngine && !ijkFallbackTried) {
-            setupEngine()
-        }
-    }
-
-    /** 记录当前线路被判定需要 AV3A 兼容引擎（key = channelId:sourceId） */
-    private fun markCurrentSourceAsAv3a() {
-        val ch = currentChannel ?: return
-        if (currentSourceIndex < ch.urls.size) {
-            Prefs.markAv3aSource(this, ch.id, ch.urls[currentSourceIndex].id)
-        }
     }
 
     // ============================ 持续花屏自动恢复 ============================

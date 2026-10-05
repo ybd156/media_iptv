@@ -7,6 +7,7 @@
 
 | 版本 | versionCode | 要点 |
 | --- | --- | --- |
+| 1.11.17 | 73 | 架构重构：去掉 ijkplayer 与全部商业 SDK（APK 22.6MB→3.3MB）；时移统一为「录像窗口」；索引扫描改异步不再阻塞事件循环 |
 | 1.11.16 | 72 | 更新改走 GitHub Release：后台配仓库/加速前缀，服务端读版本并下发（客户端不用改） |
 | 1.11.15 | 71 | 点完回看/时移要等几秒：进频道后静默预热时移窗口；回看/时移切换不再淡出黑屏 |
 | 1.11.14 | 70 | 进时移要等十几秒：时移流不再贴直播边缘播（贴边就要等下一个关键帧分片） |
@@ -41,6 +42,105 @@
 | 1.3.0 | — | 见下 |
 
 > 1.9.0 ~ 1.11.8 这几版当时没有补写说明，这份文件从 1.11.9 起继续记录。
+
+---
+## 1.11.17（versionCode 73）—— 架构重构：去掉商业 SDK、时移统一
+
+这一版动的是骨架，不是补丁。两件事，各自独立可验证。
+
+### 一、去掉 ijkplayer 与全部商业 SDK
+
+**为什么不能只删文件**：`readelf -d` 显示这些库是**加载期硬依赖**：
+
+```
+libijkplayer.so  → NEEDED: libijkffmpeg.so, libijksdl.so,
+                            libRtsSDK.so            ← 阿里云 RTS
+                            libwsrtcsdk.so          ← 网宿 WebRTC
+                            libavs3a_decoder.so, libavs3a_renderer.so
+libijkffmpeg.so  → NEEDED: libSennheiserAmbeoDecoder.so, libavs3a_*.so
+```
+
+少任何一个，`libijkplayer.so` 直接 dlopen 失败。而这个 ijkplayer 是**定制构建**
+（编译时链进了上面那些库），仓库里没有它的源码，没法"重新编译一份干净的"。
+所以只有一条路：**整个 ijk 引擎一起去掉**。
+
+**去掉的前提**：ijk 引擎在这个项目里只为**一件事**存在 —— AV3A（AVS3 音频 / Audio Vivid，
+TS 里 `stream_type=0xD5`）。ExoPlayer + Jellyfin FFmpeg 扩展解不了它，只能靠 ijk 里的
+`libavs3a_decoder`。而实际在看的频道是 H.264 + MP2，走不到这条路。
+
+**结果**：
+
+| | 改造前 | 改造后 |
+| --- | --- | --- |
+| APK 体积 | 22,569,623 字节 | **3,368,262 字节（-85.1%）** |
+| jniLibs | 16 个 .so（两个 ABI） | 0（目录整体删除） |
+| 播放引擎 | Exo / ijk / 系统 | **Exo / 系统** |
+| 第三方源码 | tv/danmaku(36) + com/wangsu(3) + com/aliyun(1) | 全部删除 |
+
+**保留**：APK 里还有 2 个 `libffmpegJNI.so`，来自开源依赖
+`org.jellyfin.media3:media3-ffmpeg-decoder`（AC3/E-AC3/DTS 软解必需），**不是商业 SDK**。
+
+**破坏性变更**：不再支持 AV3A 音频频道。遇到这种频道 ExoPlayer 会报音轨不支持，
+不会再自动切引擎。频道列表里若有 AV3A 频道，它们会无声（画面正常）。
+
+### 二、时移统一为「录像窗口」
+
+旧实现有两条路径：有录像的走「录像共用」，没录像的**现场拉起 ffmpeg 攒滚动 HLS 窗口**。
+后者的初始代价是 **5.2 秒**（实测：avformat 探测 + 攒满一个分片时长 + 关键帧对齐），
+这 5 秒里播放列表不存在，客户端只能反复拿 503。而这 5 秒**压不掉**：
+
+- `-hls_init_time 1`：ffmpeg 8.1.1 上会把**所有**分片切成 1 秒（33 秒窗口 33 个 1.0s 分片），
+  分片数翻 4 倍，还让播放器按 3×TARGETDURATION=3 秒贴边播 —— 反而更糟，已回滚；
+- 只压探测期：首片 5.2s → 4.8s，没有意义（探测期和「攒够一个分片内容」本来就重叠）。
+
+现在**只剩一条路**：**时移 = 录像窗口**。有没有时移变成一个清晰的问题 ——
+这个频道有没有在录像。服务端本来就只对配了录像任务的频道下发时移地址
+（`client.js` 的 `recChannelIds`），所以这次统一**没有减少任何客户端本来能用的时移**。
+
+删掉的东西：`timeshift.js` 里的 ffmpeg 启动分支、`/stream/timeshift/.../:seg` 分片路由、
+`playlistPath`/`segmentPath`/`dirOf`/`detectFfmpeg`/`SEGMENT_SECONDS`/`RESUME_WINDOW_MS`，
+以及时移的临时目录。会话现在只是「谁最近在用时移」的记录，没有子进程要管。
+
+**代价**（明确的取舍）：刚开录像的频道要等第一个分片写完才有历史。分片时长由
+`recordSegmentMin` 决定（当前是 5 分钟）—— 想更快就调到 1 分钟，
+代价是索引扫描更频繁、磁盘文件更多。
+
+### 三、索引扫描改异步（这次重构的隐藏收益）
+
+`recordIndex` 原先用 `spawnSync` 调 ffprobe，单次扫 200MB 约 0.45 秒，而这 0.45 秒里
+**整个 Node 事件循环是停住的** —— 同一时刻所有客户端请求一起卡。线上日志里
+`index.m3u8` 出现过 2.7 秒的响应，就是几次扫描叠在一起。
+
+现在改成 `spawn` + Promise，并对同一个文件做**并发去重**（多个请求共享同一次扫描）。
+
+**实测对比**（测试实例 + 真实 342MB 录像分片，冷扫描）：
+
+| 指标 | 实测 |
+| --- | --- |
+| 冷扫描请求耗时 | 1917ms |
+| **扫描期间到达的轻请求** | **10ms**（基线 44ms） |
+| 索引已热后的时移请求 | 5ms |
+
+也就是说：慢的那个请求还是慢（该等 ffprobe 就得等），但它**不再拖住别人**。
+
+### 验证
+
+- 删除彻底性：`grep -rn "tv\.danmaku\|IjkMediaPlayer\|IMediaPlayer\|com\.wangsu\|com\.aliyun" android/app/src` → 0 命中；
+  `find android/app/src/main/jniLibs -name '*.so' | wc -l` → 0；
+  产物 `classes.dex` 复核 IjkMediaPlayer=0、tv.danmaku=0；
+- APK 构建成功（`assembleRelease`，versionCode=73，apksigner 校验通过），体积 -85.1%；
+- 时移播放列表：47 个分片全部带 `#EXT-X-BYTERANGE`、`HOLD-BACK=20`；
+- 回看播放列表：30 个分片、带 `ENDLIST`；
+- 语义变更：有录像的频道 200；没录像的频道 503 且提示「这个频道没有可用的录像」；
+- 异步化：见上表；
+- 服务端 FPK 冒烟：用包内 node 启动，`/api/client/version` 与 `/admin/` 均 200。
+
+### 一个构建陷阱（值得记住）
+
+`android/build-on-nas.sh` 用 `tar` 把源码同步到 `/tmp` 的工作副本，而 **tar 只覆盖、
+不删除**目标目录里已不存在的文件。所以**删除源文件后第一次构建必须加 `--clean`**，
+否则会编译到工作副本里残留的旧源码、继续打包已删的 .so —— **构建报成功但体积不降**，
+是静默假成功。这次改动正是靠 `--clean` 才拿到真实的 3.3MB。
 
 ---
 ## 1.11.16（versionCode 72）—— 客户端更新改走 GitHub Release

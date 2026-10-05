@@ -62,7 +62,9 @@ android {
         //                时移建窗重试 1.5s→0.6s；服务端录像分片写完 10 秒即预热切片索引）
         // 1.11.16 -> 72（客户端功能与 1.11.15 相同，只是跟随服务端版本号：
         //                服务端新增「从 GitHub Release 读版本并下发」的更新渠道）
-        versionCode = 72
+        // 1.11.17 -> 73（去掉 ijkplayer 与全部商业 SDK：APK 22.6MB → 3.3MB；
+        //                服务端时移统一为"录像窗口"、索引扫描改异步不再阻塞事件循环）
+        versionCode = 73
         versionName = manifestVersion
 
         ndk {
@@ -179,7 +181,9 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.6.1")
     implementation("androidx.media3:media3-ui:1.6.1")
 
-    // 单元测试：给纯 JVM 可测的逻辑（Av3aReader 的时间戳推算等）补真实断言
+    // 单元测试：src/test 目前是空的（原来的 AV3A 用例随该功能一起删除了）。
+    // 保留 junit 是为了后续给纯 JVM 可测的逻辑（时间戳换算、播放列表解析等）补断言 ——
+    // testImplementation 不会打进 APK，留着没有运行时代价。
     testImplementation("junit:junit:4.13.2")
     // Jellyfin 预编译 FFmpeg 扩展：软解 AC3/E-AC3/DTS 等平台不支持音轨（解决 AVS1 无声）
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2")

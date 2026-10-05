@@ -39,12 +39,15 @@
 -dontwarn kotlin.**
 
 # ============================ ijkplayer AV3A 兼容引擎 ============================
-# native 通过 JNI 回调以下 Java 类/方法，关闭混淆与裁剪，否则 release(minify) 构建会在
-# 运行时崩溃。这些类是 vendored 源码（android/app/src/main/java/tv/danmaku、com/wangsu、
-# com/aliyun），不是 AAR 依赖，所以必须显式保留。
--keep class tv.danmaku.ijk.media.player.** { *; }
--keep class com.wangsu.** { *; }
--keep class com.aliyun.rts.** { *; }
--dontwarn tv.danmaku.ijk.media.player.**
--dontwarn com.wangsu.**
--dontwarn com.aliyun.rts.**
+# 1.11.17：原先这里为 vendored 的 ijkplayer 与商业 SDK 保留类与关闭警告
+#   -keep class tv.danmaku.ijk.media.player.** { *; }
+#   -keep class com.wangsu.** { *; }
+#   -keep class com.aliyun.rts.** { *; }
+#   -dontwarn tv.danmaku.ijk.media.player.** / com.wangsu.** / com.aliyun.rts.**
+# 这些类（及其 JNI 依赖的 .so）已随「去掉 ijkplayer 与商业 SDK」一并移除，
+# 保留规则会变成指向不存在类的死配置。R8 对缺失类静默忽略（构建日志里不会有
+# "can't find referenced class"），所以它不会报错、只会悄悄留在那里 —— 属于
+# 「看着像保护、实际什么都没保护」的配置，删掉以免以后有人以为这些类还在。
+#
+# 注意：开源依赖 org.jellyfin.media3:media3-ffmpeg-decoder 自带的 libffmpegJNI.so
+# 仍然需要，它的 keep 规则由该 AAR 的 consumer-rules 提供，不在这里维护。

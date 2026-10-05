@@ -9,7 +9,10 @@ import androidx.media3.exoplayer.LoadControl
 import com.mediaiptv.tv.util.Prefs
 
 /**
- * 播放引擎工厂：根据设置创建对应引擎，并配置 LoadControl
+ * 播放引擎工厂：根据设置创建对应引擎，并配置 LoadControl。
+ *
+ * 只有两条分支：ExoPlayer（media3，默认）与系统 MediaPlayer。
+ * 未知或遗留的引擎名（例如旧版本存下来的 "ijk"）一律落到 ExoEngine。
  */
 @UnstableApi
 object PlayerEngineFactory {
@@ -18,9 +21,6 @@ object PlayerEngineFactory {
         val engineName = Prefs.getEngine(context)
         return if (engineName == Prefs.ENGINE_SYSTEM) {
             SystemEngine(context)
-        } else if (engineName == Prefs.ENGINE_IJK) {
-            // 手动强制 IJK 兼容引擎：直接用内置解码器（含 AV3A），不做 Exo 探测
-            IjkEngine(context)
         } else {
             ExoEngine(
                 context,

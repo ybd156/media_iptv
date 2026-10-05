@@ -1374,9 +1374,9 @@ async function loadDiagnostics() {
     ]],
     ['时移', [
       ['开关', d.timeshift.enabled ? '开启' : '关闭'],
-      ['窗口长度', d.timeshift.windowMin + ' 分钟（每 ' + d.timeshift.segmentSeconds + ' 秒一个分片）'],
-      ['ffmpeg', d.timeshift.ffmpegAvailable ? '可用' : '不可用', d.timeshift.ffmpegAvailable ? '' : '时移依赖 ffmpeg', !d.timeshift.ffmpegAvailable],
-      ['正在缓冲', d.timeshift.activeSessions.length
+      ['窗口长度', d.timeshift.windowMin + ' 分钟（时间轴来自录像分片，每片 ' + d.timeshift.recordSegmentMin + ' 分钟）'],
+      ['数据源', '录像', '时移 = 录像窗口：只有配了录像任务且录像可靠的频道才有入口', false],
+      ['正在用时移', d.timeshift.activeSessions.length
         ? d.timeshift.activeSessions.map((x) => '线路 ' + x.channelUrlId + '（空闲 ' + Math.round(x.idleMs / 1000) + 's）').join('、')
         : '没有客户端在用时移'],
     ]],
@@ -1477,8 +1477,11 @@ async function testGithub() {
 }
 
 /**
- * 时移状态。除了开关和窗口，还把「正在跑的会话」列出来 ——
- * 这样能直接看出到底有没有在缓冲，而不是靠猜。
+ * 时移状态。
+ *
+ * 1.11.17 起时移 = 录像窗口，所以这里不再显示「ffmpeg 可不可用」——
+ * 决定有没有时移的是**录像任务**：没配录像任务的频道服务端根本不下发时移地址，
+ * 配了但录像不可靠（分片时长明显偏短）的频道也会被挡掉。想排查就去「录像」页看任务。
  */
 async function loadTimeshiftStatus() {
   try {
@@ -1486,13 +1489,13 @@ async function loadTimeshiftStatus() {
     $('cfgTimeshift').value = t.enabled ? '1' : '0';
     $('cfgTimeshiftWindow').value = t.windowMin;
     const parts = [];
-    parts.push(t.ffmpegAvailable ? 'ffmpeg 可用' : '<b style="color:#fc8181">未找到 ffmpeg，时移不可用</b>');
+    parts.push('时间轴来自录像（每片 ' + t.recordSegmentMin + ' 分钟）：<b>只有配了录像任务、且录像可靠的频道才有入口</b>');
     if (!t.sessions.length) {
       parts.push('当前没有客户端在用时移');
     } else {
-      parts.push('正在缓冲 ' + t.sessions.length + ' 路：' +
+      parts.push('正在用时移 ' + t.sessions.length + ' 路：' +
         t.sessions.map((x) =>
-          '线路 ' + x.channelUrlId + '（空闲 ' + Math.round(x.idleMs / 1000) + 's / 窗口 ' + x.windowMin + ' 分钟）'
+          '线路 ' + x.channelUrlId + '（空闲 ' + Math.round(x.idleMs / 1000) + 's）'
         ).join('、'));
     }
     $('timeshiftStatus').innerHTML = parts.join(' · ');

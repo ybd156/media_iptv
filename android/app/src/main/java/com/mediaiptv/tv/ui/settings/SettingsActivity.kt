@@ -68,12 +68,11 @@ class SettingsActivity : AppCompatActivity() {
         // ------------------------- 播放 -------------------------
         addGroupHeader(getString(R.string.settings_group_play))
 
-        // 播放内核（Exo / 系统 / IJK 兼容）
+        // 播放内核（Exo / 系统）
         addCycleRow(
             getString(R.string.settings_engine),
             listOf(Prefs.ENGINE_EXO to getString(R.string.settings_engine_exo),
-                   Prefs.ENGINE_SYSTEM to getString(R.string.settings_engine_system),
-                   Prefs.ENGINE_IJK to getString(R.string.settings_engine_ijk)),
+                   Prefs.ENGINE_SYSTEM to getString(R.string.settings_engine_system)),
             { Prefs.getEngine(this) },
             { Prefs.setEngine(this, it) }
         )
