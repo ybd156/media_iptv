@@ -123,47 +123,85 @@ if [ "$DRY" = "1" ]; then
     exit 0
 fi
 
-GH() { curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" \
+# 重试是必须的：fpk 有 90MB 上下，实测一次上传会被网络中途重置
+# （curl: (56) Recv failure: Connection reset by peer），而这种失败重传一次就好了。
+# 重试只针对瞬时错误（超时/连接重置），不会把 4xx 当成功。
+GH() { curl -fsS --retry 3 --retry-delay 5 --retry-connrefused --connect-timeout 20 \
+        -H "Authorization: Bearer $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: MediaIptv-Release" "$@"; }
 
-# tag 已存在就直接报错：覆盖已发布的版本会让已经装了那一版的客户端
-# 看到"同一个版本号、不同内容"的包，sha256 校验会失败，比直接失败更难查。
-if GH "$API/repos/$GITHUB_REPO/releases/tags/$TAG" >/dev/null 2>&1; then
-    die "$TAG 已经存在。要重发请先在 GitHub 上删掉这个 Release 和 tag。"
+# ---- 取 Release：已存在就复用（补传缺失的资产），不存在才创建 ----
+# 为什么允许复用而不是直接报错：fpk 有 90MB 上下，上传中途被网络重置是很常见的
+# （实测一次就撞上）。这时候 Release 已经建好、APK 也传上去了，如果重跑只会报
+# "tag 已存在"，人就得手工去网页上补传 —— 所以这里做成幂等：再跑一次补上缺的。
+# 注意：已存在时**不覆盖**同名资产。覆盖会让已经装了那一版的客户端看到
+# "同一个版本号、不同内容"的包，sha256 校验失败，比直接失败更难查。
+REL_ID=""
+EXISTING="$(GH "$API/repos/$GITHUB_REPO/releases/tags/$TAG" 2>/dev/null)" || EXISTING=""
+if [ -n "$EXISTING" ]; then
+    REL_ID="$(printf '%s' "$EXISTING" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).id||""))}catch(_){}})')"
 fi
 
-# 用 jq 组装 JSON 更稳；没有 jq 就退回 node（服务端本来就要 Node）
-JSON_BODY="$(node -e '
+if [ -n "$REL_ID" ]; then
+    echo "    $TAG 已存在（id=$REL_ID），本次只补传缺失的资产"
+else
+    # 用 node 组装 JSON（服务端本来就要 Node，不再多依赖 jq）
+    JSON_BODY="$(node -e '
 const [notes, tag, name] = process.argv.slice(1);
 process.stdout.write(JSON.stringify({ tag_name: tag, name, body: notes, draft: false, prerelease: false }));
 ' "$BODY" "$TAG" "$VERSION")" || die "组装 Release 请求体失败"
 
-RESP="$(GH -X POST "$API/repos/$GITHUB_REPO/releases" -d "$JSON_BODY")" || die "创建 Release 失败（token 权限或仓库名不对？）"
-REL_ID="$(printf '%s' "$RESP" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).id||""))}catch(_){}})')"
-[ -n "$REL_ID" ] || die "创建 Release 成功但读不到 id，响应：$RESP"
-echo "    已创建 Release id=$REL_ID"
+    RESP="$(GH -X POST "$API/repos/$GITHUB_REPO/releases" -d "$JSON_BODY")" || die "创建 Release 失败（token 权限或仓库名不对？）"
+    REL_ID="$(printf '%s' "$RESP" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).id||""))}catch(_){}})')"
+    [ -n "$REL_ID" ] || die "创建 Release 成功但读不到 id，响应：$RESP"
+    echo "    已创建 Release id=$REL_ID"
+fi
 
-echo "==> 上传 APK（${SIZE}B，可能要一会儿）..."
-GH -X POST "$UPLOAD/repos/$GITHUB_REPO/releases/$REL_ID/assets?name=$(basename "$APK")" \
-   -H "Content-Type: application/vnd.android.package-archive" \
-   --data-binary @"$APK" >/dev/null || die "上传 APK 失败"
-echo "    上传完成"
+# 远端已有资产：输出 "id<TAB>name<TAB>size<TAB>state"
+# **不能只看名字**：上传中途被重置会在远端留下 state=starter 的半成品残骸，
+# 只看名字的话脚本会以为"已经传过了"而跳过，Release 上就挂着一个坏包 ——
+# 比没有更糟（用户下载后装不上，还以为是包本身有问题）。
+HAVE="$(GH "$API/repos/$GITHUB_REPO/releases/$REL_ID/assets?per_page=100" 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{for(const a of JSON.parse(s))console.log([a.id,a.name,a.size,a.state].join("\t"))}catch(_){}})')"
+
+upload_asset() {
+    local file="$1" ctype="$2" name want line id size state
+    name="$(basename "$file")"
+    want="$(stat -c %s "$file")"
+    line="$(printf '%s\n' "$HAVE" | awk -F'\t' -v n="$name" '$2==n{print; exit}')"
+    if [ -n "$line" ]; then
+        id="$(printf '%s' "$line" | cut -f1)"
+        size="$(printf '%s' "$line" | cut -f3)"
+        state="$(printf '%s' "$line" | cut -f4)"
+        if [ "$state" = "uploaded" ] && [ "$size" = "$want" ]; then
+            echo "    跳过 $name（远端已传完，${size} 字节）"
+            return 0
+        fi
+        echo "    远端 $name 是半成品（state=$state / size=$size，本地是 $want），先删掉残骸"
+        GH -X DELETE "$API/repos/$GITHUB_REPO/releases/assets/$id" >/dev/null \
+            || die "删除半成品资产失败（id=$id）"
+    fi
+    echo "==> 上传 $name（$(numfmt --to=iec "$want" 2>/dev/null || echo "${want}B")）..."
+    GH -X POST "$UPLOAD/repos/$GITHUB_REPO/releases/$REL_ID/assets?name=$name" \
+       -H "Content-Type: $ctype" \
+       --data-binary @"$file" >/dev/null \
+       || die "上传 $name 失败（网络中断可重跑本脚本：会删掉残骸再补传）"
+    echo "    上传完成"
+}
+
+upload_asset "$APK" "application/vnd.android.package-archive"
 
 # 同版本的服务端安装包（fpk）一并挂上去：GitHub Release 就是完整的发布记录，
 # 换机器重装时不用再回头找构建产物。没有就跳过，不影响客户端更新。
 FPK="$DIST/mediaiptv_all_v${VERSION}.fpk"
 if [ -f "$FPK" ]; then
-    echo "==> 上传服务端安装包 $(basename "$FPK")（$(numfmt --to=iec "$(stat -c %s "$FPK")" 2>/dev/null || echo "?")）..."
-    GH -X POST "$UPLOAD/repos/$GITHUB_REPO/releases/$REL_ID/assets?name=$(basename "$FPK")" \
-       -H "Content-Type: application/octet-stream" \
-       --data-binary @"$FPK" >/dev/null || die "上传 fpk 失败"
-    echo "    上传完成"
+    upload_asset "$FPK" "application/octet-stream"
 else
     echo "    （dist/ 里没有 mediaiptv_all_v${VERSION}.fpk，只发了 APK）"
 fi
 
 echo
-echo "==> 发布成功：https://github.com/$GITHUB_REPO/releases/tag/$TAG"
+echo "==> 发布完成：https://github.com/$GITHUB_REPO/releases/tag/$TAG"
 echo "    服务端后台填仓库名后，客户端「检查更新」就会读到这个版本。"
 echo "    提示：如果服务端已经读过一次 GitHub（缓存 30 分钟），保存一次配置即可立即刷新。"
