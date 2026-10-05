@@ -144,6 +144,22 @@ ensure_tools() {
     say "SDK: $SDK"
 }
 
+# ---------------------------------------------------------------- 权限修复
+# 这个工作区（DSH 沙箱挂载）里，**任何写文件的操作**都可能把文件留成 mode 000：
+# 实测 Edit 工具、sed -i 都会（属主仍是当前用户，只是权限位丢了）。
+# 后果很隐蔽：tar 同步源码时报 "Cannot open: Permission denied" 直接中断构建，
+# 而错误信息指向的是源码文件，看起来像"文件坏了"。
+# 这里统一修一遍 —— 只动自己拥有的，root 拥有的那些实际可读、不用碰。
+fix_perms() {
+    local n
+    n="$(find "$ROOT" -type f -user "$(id -un)" ! -perm -u+r 2>/dev/null | grep -vc node_modules || true)"
+    if [ "${n:-0}" -gt 0 ]; then
+        find "$ROOT" -type d -user "$(id -un)" ! -perm -u+rx -exec chmod u+rx {} + 2>/dev/null
+        find "$ROOT" -type f -user "$(id -un)" ! -perm -u+r -exec chmod u+rw {} + 2>/dev/null
+        say "修复了 $n 个权限为 000 的文件（沙箱里 Edit/sed 改过就会这样）"
+    fi
+}
+
 # ---------------------------------------------------------------- 签名密码
 # 签名密码**不进仓库**（见 android/gradle.properties 的说明）：写在那里会跟着公开，
 # 而密码泄露 = 别人能签出可覆盖安装到你电视上的"更新包"。
@@ -260,6 +276,7 @@ say "缓存目录: $CACHE"
 say "工作副本: $WORK"
 [ "$CLEAN" = "1" ] && { say "--clean：删除工作副本（工具链缓存保留）"; rm -rf "$WORK"; }
 ensure_tools
+fix_perms
 load_signing
 prepare_work
 

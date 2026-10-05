@@ -650,7 +650,15 @@ class ExoEngine(
 
     override fun currentPosition(): Long = player.currentPosition
 
+    /** live 流的 duration 是未定义的（返回 0），进度与定位要靠 [liveOffsetMs] 换算 */
     override fun duration(): Long = player.duration.coerceAtLeast(0)
+
+    override fun liveOffsetMs(): Long {
+        // 时移流的窗口边界是"直播边缘"，ExoPlayer 用 currentLiveOffset 给出距边缘的距离。
+        // 未定义（不是 live 流 / 还没准备好）时它返回 C.TIME_UNSET，这里统一成 -1。
+        val off = player.currentLiveOffset
+        return if (off == C.TIME_UNSET || off < 0L) -1L else off
+    }
 
     override fun seekTo(positionMs: Long) {
         player.seekTo(positionMs)

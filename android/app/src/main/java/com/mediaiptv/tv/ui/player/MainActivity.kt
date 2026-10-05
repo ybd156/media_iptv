@@ -553,18 +553,7 @@ class MainActivity : AppCompatActivity() {
                 if (pendingTimeshiftBackMs > 0L) {
                     val back = pendingTimeshiftBackMs
                     pendingTimeshiftBackMs = 0L
-                    val dur = engine?.duration() ?: 0L
-                    if (dur > 0L) {
-                        val target = (dur - back).coerceAtLeast(0L)
-                        Log.i(TAG_TS, "时移定位：回退 ${back / 1000}s → ${target}ms / ${dur}ms")
-                        engine?.seekTo(target)
-                        // 窗口比要回退的还短（滚动 HLS 刚建立、只有几秒）→ 只能退到窗口开头。
-                        // 这时进度条几乎没有可拖的范围，必须说清楚是"窗口刚起步"，
-                        // 否则用户会以为拖动坏了 —— 线上反馈就是「遥控器拉不动进度条」。
-                        if (dur < back) {
-                            showStatusTemp(getString(R.string.timeshift_window_short, dur / 1000))
-                        }
-                    }
+                    seekBackInTimeshift(back)
                     showOsd()
                 }
                 // 回看：定位到用户点的那个节目的起点（服务端现在下发的是按关键帧切片的
@@ -705,7 +694,22 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
                 val dur = engine?.duration() ?: 0
-                if (dur > 0 && seekBar != null) {
+                if (isTimeshiftMode) {
+                    // 时移：按「窗口百分比 → 距直播边缘多远」换算目标位置。
+                    //
+                    // 不能走下面那条按 duration 换算的路：时移流是 HLS **live**，
+                    // duration 恒为 0（播放器说"未定义"），原先 `if (dur > 0)` 不成立，
+                    // 于是拖了等于没拖、指针还弹回最右边 —— 用户看到的就是
+                    // 「一拉进度条就自动往最右边跑」。
+                    val winMs = timeshiftWindowMs()
+                    if (winMs > 0 && seekBar != null) {
+                        val backMs = if (seekBar.progress >= 99) 0L else winMs * (100 - seekBar.progress) / 100
+                        Log.i(TAG_TS, "拖动结束（时移）：${seekBar.progress}% → 回退 ${backMs / 1000}s")
+                        seekBackInTimeshift(backMs)
+                        (engine as? ExoEngine)?.noteUserSeek()
+                    }
+                } else if (dur > 0 && seekBar != null) {
+                    // 回看是 VOD（有确定时长），按总时长换算即可
                     // 拖到最右端时直接对到窗口末尾（＝直播边缘），避免因
                     // 四舍五入差一两个百分点而"永远差几秒回不到直播"
                     val target = if (seekBar.progress >= 99) dur else dur * seekBar.progress / 100
@@ -1560,6 +1564,41 @@ class MainActivity : AppCompatActivity() {
     /** 回看模式下进度轮询（Job 需要保存：原先每次点节目都新起一个 while(isCatchupMode)
      *  循环且从不取消，在回看模式下再点一个节目时 isCatchupMode 仍为 true，
      *  旧循环不会退出，于是 N 次点击就有 N 个 500ms 循环同时写同一个 SeekBar） */
+    /** 服务端下发的时移窗口长度（ms）；没拿到返回 0 */
+    private fun timeshiftWindowMs(): Long {
+        val min = Prefs.serverTimeshiftWindowMin(this)
+        return if (min > 0) min * 60_000L else 0L
+    }
+
+    /**
+     * 在时移里往回退 [backMs]。
+     *
+     * **不能用 duration 换算**：时移流是 HLS live（播放列表没有 `#EXT-X-ENDLIST`），
+     * 播放器对这种流的 duration 是"未定义"的（ExoPlayer 返回 0）。原先
+     * `if (dur > 0) seekTo(dur - back)` 因此整个被跳过 —— 拖了没反应，
+     * 指针还一直贴在最右边。
+     *
+     * 直播流里唯一确定的量是「距直播边缘多远」（[PlayerEngine.liveOffsetMs]），
+     * 于是换算成：边缘的位置 = 当前位置 + 距边缘距离；目标 = 边缘 − 要回退的量。
+     */
+    private fun seekBackInTimeshift(backMs: Long) {
+        val eng = engine ?: return
+        val off = eng.liveOffsetMs()
+        if (off < 0L) {
+            // liveOffset 还没定义（流没就绪）：这次跳过，等下一次拖动或出画后再来
+            Log.i(TAG_TS, "时移定位：liveOffset 未就绪，暂不定位（要回退 ${backMs / 1000}s）")
+            return
+        }
+        val edgePos = eng.currentPosition() + off
+        val target = (edgePos - backMs).coerceAtLeast(0L)
+        Log.i(TAG_TS, "时移定位：回退 ${backMs / 1000}s（当前距边缘 ${off / 1000}s）→ seek ${target}ms")
+        eng.seekTo(target)
+        val winMs = timeshiftWindowMs()
+        if (winMs > 0 && backMs > winMs) {
+            showStatusTemp(getString(R.string.timeshift_window_short, winMs / 1000))
+        }
+    }
+
     private fun startProgressPolling() {
         progressJob?.cancel()
         progressJob = lifecycleScope.launch {
@@ -1567,14 +1606,27 @@ class MainActivity : AppCompatActivity() {
                 if (isCatchupMode || isTimeshiftMode) {
                     val dur = engine?.duration() ?: 0
                     val pos = engine?.currentPosition() ?: 0
-                    if (dur > 0) {
+                    if (isTimeshiftMode) {
+                        // 时移：live 流没有 duration，用「窗口长度 − 距边缘距离」换算进度。
+                        //
+                        // 位置 = 窗口末尾 − 距直播边缘的距离。这样指针才真的跟着播放位置走，
+                        // 而不是永远贴在最右边 —— 原先这里判断 `dur > 0` 才更新，
+                        // 而时移流的 dur 恒为 0，于是每 500ms 都把指针按回 100%，
+                        // 用户看到的就是「一拉进度条就自动往最右边跑」。
+                        val winMs = timeshiftWindowMs()
+                        val off = engine?.liveOffsetMs() ?: -1L
+                        if (winMs > 0 && off >= 0L) {
+                            updateCatchupProgress((winMs - off).coerceIn(0L, winMs), winMs)
+                        } else {
+                            // 还没出画面（窗口建立中）：指针停在直播端，
+                            // 但要在那一行说清楚在等什么 —— 否则"按了没反应"看起来就是坏了
+                            if (binding.seekBar.progress != 100) binding.seekBar.progress = 100
+                            binding.tvSeekTime.visibility = View.VISIBLE
+                            binding.tvSeekTime.text = getString(R.string.timeshift_warming)
+                        }
+                    } else if (dur > 0) {
+                        // 回看：VOD 播放列表有确定时长，按总时长换算
                         updateCatchupProgress(pos, dur)
-                    } else if (isTimeshiftMode) {
-                        // 窗口还没建立（时移播放列表还没回来）：指针停在直播端，
-                        // 但要在那一行说清楚在等什么 —— 否则"按了没反应"看起来就是坏了
-                        if (binding.seekBar.progress != 100) binding.seekBar.progress = 100
-                        binding.tvSeekTime.visibility = View.VISIBLE
-                        binding.tvSeekTime.text = getString(R.string.timeshift_warming)
                     }
                 } else {
                     // 还没进时移：指针停在最右端（＝直播边缘），往回拖才会进时移
@@ -1610,9 +1662,8 @@ class MainActivity : AppCompatActivity() {
         // 时移下要能看到"现在落后多少"以及"怎么回直播"，
         // 否则标签只写"时移"，用户不知道该按什么键。
         val behindSec = if (isBehindLive()) {
-            val dur = engine?.duration() ?: 0L
-            val pos = engine?.currentPosition() ?: 0L
-            (dur - pos) / 1000
+            // 时移流是 live，没有 duration；"落后多少"就是距直播边缘的距离
+            (engine?.liveOffsetMs() ?: 0L) / 1000
         } else {
             0L
         }
@@ -1742,7 +1793,12 @@ class MainActivity : AppCompatActivity() {
      * 回看片段和时移窗口都有确定的时长；普通直播（直连/代理）duration 为 0。
      * 用它做判据很干净 —— 也顺带保证左右键在普通直播下仍是原来的「开频道面板 / 开节目单」。
      */
-    private fun canSeek(): Boolean = (engine?.duration() ?: 0L) > 0L
+    private fun canSeek(): Boolean {
+        // 时移流是 HLS live，duration 恒为 0 —— 不能拿它判断"能不能拖"，
+        // 否则时移里遥控器左右键会被判成不可用（原先就是这个后果）。
+        if (isTimeshiftMode) return (engine?.liveOffsetMs() ?: -1L) >= 0L
+        return (engine?.duration() ?: 0L) > 0L
+    }
 
     /**
      * 时移模式下是否落后于直播边缘。
@@ -1751,9 +1807,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun isBehindLive(): Boolean {
         if (!isTimeshiftMode) return false
-        val dur = engine?.duration() ?: 0L
-        val pos = engine?.currentPosition() ?: 0L
-        return dur > 0L && (dur - pos) > 5_000L
+        // 时移流是 HLS live：duration 未定义（0），"落后多少"只能看距直播边缘的距离。
+        // 原先用 (dur - pos) 判断，dur 恒为 0 → 这里永远返回 false，
+        // 于是"落后 00:05:23"这类提示在时移里从来不显示。
+        val off = engine?.liveOffsetMs() ?: -1L
+        return off > 5_000L
     }
 
     /**
@@ -1909,21 +1967,39 @@ class MainActivity : AppCompatActivity() {
         // 丢掉时不更新 lastSeekAt，所以下一个重复事件的间隔会自然变大，直到走下一步。
         if (now - lastSeekAt < keyRepeatMinStepMs) return
         lastSeekAt = now
-        val dur = engine?.duration() ?: 0L
-        val step = if (dur > 0L) {
-            (dur * seekRampRatio[seekRampIndex]).toLong().coerceIn(seekStepMinMs, seekStepMaxMs)
+        // 步长按"可拖范围"的比例算。时移流没有 duration，可拖范围就是时移窗口长度；
+        // 原先用 duration 算，时移下恒为 0 → 永远退化成最小固定步长（遥控器拉不动）。
+        val rangeMs = if (isTimeshiftMode) timeshiftWindowMs() else (engine?.duration() ?: 0L)
+        val step = if (rangeMs > 0L) {
+            (rangeMs * seekRampRatio[seekRampIndex]).toLong().coerceIn(seekStepMinMs, seekStepMaxMs)
         } else {
             seekStepMinMs
         }
-        Log.i(TAG_TS, "加速拖动：第 ${seekRampIndex + 1} 档，窗口 ${dur / 1000}s，步进 ${step / 1000} 秒（间隔 ${gap}ms）")
+        Log.i(TAG_TS, "加速拖动：第 ${seekRampIndex + 1} 档，可拖范围 ${rangeMs / 1000}s，步进 ${step / 1000} 秒（间隔 ${gap}ms）")
         seekBy(direction * step)
     }
 
     private fun seekBy(deltaMs: Long) {
         val eng = engine ?: return
+        if (isTimeshiftMode) {
+            // 时移：live 流没有 duration，只能按"当前位置 + 步进"算，并夹在窗口内。
+            // 上限是直播边缘（当前位置 + 距边缘距离），往前拖不能越过它。
+            val off = eng.liveOffsetMs()
+            if (off < 0L) {
+                // 还没出画面（liveOffset 未定义）：这时拖动无处可拖，明确告诉用户在等
+                showStatusTemp(getString(R.string.timeshift_warming))
+                return
+            }
+            val edgePos = eng.currentPosition() + off
+            val target = (eng.currentPosition() + deltaMs).coerceIn(0L, edgePos)
+            Log.i(TAG_TS, "时移步进：${deltaMs / 1000}s → seek ${target}ms（边缘 ${edgePos}ms）")
+            eng.seekTo(target)
+            (eng as? ExoEngine)?.noteUserSeek()
+            return
+        }
         val dur = eng.duration()
         if (dur <= 0L) {
-            // 时移流刚起播、播放列表还没回来（duration 未知）：这时拖动无处可拖。
+            // 回看流刚起播、播放列表还没回来（duration 未知）：这时拖动无处可拖。
             // 原先静默 return，用户只看到"按了没反应"。
             if (isTimeshiftMode) showStatusTemp(getString(R.string.timeshift_warming))
             return

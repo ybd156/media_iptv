@@ -1,5 +1,5 @@
 appname             = mediaiptv
-version             = 1.11.18
+version             = 1.11.19
 display_name        = "${common.displayName}"
 desc                = "${common.desc}"
 platform            = all

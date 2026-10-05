@@ -42,6 +42,17 @@ interface PlayerEngine {
     /** 获取时长（ms） */
     fun duration(): Long
 
+    /**
+     * 距直播边缘的毫秒数（只对直播/时移流有意义）；不是直播流、或还没就绪时返回 -1。
+     *
+     * 为什么单独要这个方法：时移流是 HLS **live**（播放列表没有 `#EXT-X-ENDLIST`），
+     * 这种流的 [duration] 在播放器里是"未定义"的 —— ExoPlayer 返回 0。
+     * 而"按总时长算进度条""按总时长减回退量来 seek"这套算法全建立在 duration 上，
+     * 于是整个失效：拖了不动、进度条恒等于最右边。
+     * 直播流里唯一确定的量是"距边缘多远"，进度和定位都必须用它换算。
+     */
+    fun liveOffsetMs(): Long = -1L
+
     /** 跳转到指定位置（ms） */
     fun seekTo(positionMs: Long)
 
