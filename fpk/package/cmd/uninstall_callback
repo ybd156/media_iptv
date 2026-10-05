@@ -1,0 +1,56 @@
+#!/bin/bash
+# 卸载回调：停止服务，按向导选择保留或删除数据
+set -u
+
+# TRIM_* 环境不带 PATH，显式导出（见飞牛官方模板 cmd/common）
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -z "${TRIM_PKGVAR:-}" ]; then
+    if [ -d "${APP_ROOT}/var" ]; then
+        TRIM_PKGVAR="${APP_ROOT}/var"
+    else
+        TRIM_PKGVAR="/var/apps/mediaiptv/var"
+    fi
+fi
+
+echo "卸载 MediaIptv..."
+
+# 确保进程已停止（main stop 现在会整组杀掉 ffmpeg 子进程）
+"${SCRIPT_DIR}/main" stop 2>/dev/null || true
+
+# 路径校验：向导数据目录是自由文本写进状态文件的，卸载时直接 rm -rf 是数据毁灭原语。
+# 要求 /vol<N>/... 形式、至少两层、且不是挂载点。
+is_safe_to_delete() {
+    local p="$1"
+    [ -n "${p}" ] || return 1
+    [ -d "${p}" ] || return 1
+    case "${p}" in
+        /vol[0-9]*/*/*) ;;
+        *) return 1 ;;
+    esac
+    # 是挂载点时拒绝（比对 /proc/mounts 的挂载点列）
+    if [ -r /proc/mounts ]; then
+        awk '{print $2}' /proc/mounts 2>/dev/null | grep -qx "${p}" && return 1
+    fi
+    return 0
+}
+
+if [ "${wizard_data_action:-}" = "delete" ]; then
+    if [ -f "${TRIM_PKGVAR}/wizard_data_path" ]; then
+        WIZARD_DATA=$(tr -d '\r\n' <"${TRIM_PKGVAR}/wizard_data_path")
+        if is_safe_to_delete "${WIZARD_DATA}"; then
+            rm -rf "${WIZARD_DATA}"
+            echo "已删除数据目录 ${WIZARD_DATA}"
+        else
+            echo "跳过删除 ${WIZARD_DATA}：路径不满足安全条件，请手动确认"
+        fi
+    fi
+    # 包自身的 var 目录始终可以清理（是本应用自己的数据目录）
+    rm -rf "${TRIM_PKGVAR}/data" 2>/dev/null || true
+    echo "已删除所有数据"
+else
+    echo "保留数据目录"
+fi
+exit 0

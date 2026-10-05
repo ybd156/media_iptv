@@ -1,0 +1,52 @@
+#!/bin/bash
+# 配置变更回调：更新端口/密码后重启生效
+set -u
+
+# TRIM_* 环境不带 PATH，显式导出（见飞牛官方模板 cmd/common）
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -z "${TRIM_PKGVAR:-}" ]; then
+    if [ -d "${APP_ROOT}/var" ]; then
+        TRIM_PKGVAR="${APP_ROOT}/var"
+    else
+        TRIM_PKGVAR="/var/apps/mediaiptv/var"
+    fi
+fi
+
+echo "应用配置修改..."
+mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+umask 077
+
+# 覆盖端口（向导只校验 ^[0-9]*$，0 / 99999 / 空串都能通过，
+# 直接写下去会让 server 侧 parseInt 得到 NaN）
+if [ -n "${server_port:-}" ]; then
+    case "${server_port}" in
+        *[!0-9]*)
+            echo "端口必须是数字，收到：${server_port}"
+            exit 1
+            ;;
+    esac
+    if [ "${server_port}" -lt 1 ] || [ "${server_port}" -gt 65535 ]; then
+        echo "端口必须在 1..65535 之间，收到：${server_port}"
+        exit 1
+    fi
+    echo "${server_port}" >"${TRIM_PKGVAR}/server_port" || { echo "写入端口失败"; exit 1; }
+    echo "端口已更新为 ${server_port}"
+fi
+
+# 覆盖管理员密码
+if [ -n "${admin_password:-}" ]; then
+    if [ "${#admin_password}" -lt 6 ]; then
+        echo "密码至少 6 位"
+        exit 1
+    fi
+    echo "${admin_password}" >"${TRIM_PKGVAR}/admin_password" || { echo "写入密码失败"; exit 1; }
+    chmod 600 "${TRIM_PKGVAR}/admin_password" 2>/dev/null || true
+    echo "管理员密码已更新"
+fi
+
+# 重启生效，并把结果透传给 fnOS（原实现无条件 exit 0，重启失败也报成功）
+"${SCRIPT_DIR}/main" restart
+exit $?

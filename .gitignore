@@ -1,0 +1,53 @@
+# ---- Node / 服务端 ----
+node_modules/
+npm-debug.log*
+# 运行时数据（SQLite、录像、日志）：属于部署数据，不应进版本库
+server/data/
+*.log
+
+# ---- 发布产物（安装文件）----
+# dist/ 由 tools/publish.sh 收集：只保留最近两个版本的 fpk 与 apk。
+# 安装文件体积大且可重新构建，不进版本库。
+dist/
+
+# ---- FPK 打包产物与暂存 ----
+fpk/*.fpk
+fpk/fnpack
+fpk/fnpack.exe
+fpk/.cache/
+# build.sh / build.ps1 的暂存目录
+fpk/package/app/server/
+fpk/package/.app.tgz.tmp
+
+# ---- Android ----
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# ---- 机密 ----
+# 本机构建/发布用的凭据：只留 .example 模板进仓库，真身永不提交。
+#   android/signing.env  - APK 签名密钥密码（release.jks 本身已被 *.jks 挡住）
+#   tools/github.env     - 发布到 GitHub Release 用的 token
+android/signing.env
+tools/github.env
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# ---- 本地验证 / 编辑器 ----
+.tmp-verify/
+_tmp*/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

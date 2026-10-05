@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- EPG 分区标题（回看 / 直播）：不抢焦点，纯展示 -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvEpgHeader"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:focusable="false"
+    android:paddingStart="14dp"
+    android:paddingTop="16dp"
+    android:paddingEnd="14dp"
+    android:paddingBottom="6dp"
+    android:textColor="@color/primary"
+    android:textSize="14sp"
+    android:textStyle="bold" />

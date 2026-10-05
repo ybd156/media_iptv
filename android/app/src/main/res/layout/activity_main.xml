@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background">
+
+    <!-- 视频渲染层容器：运行时由 PlayerEngine 注入（ExoPlayer 用 PlayerView，SystemPlayer 用 SurfaceView）
+         注意：不要在这里加 android:keepScreenOn —— 它会让设置里的「播放时强制不息屏」
+         开关失效（MainActivity 通过 FLAG_KEEP_SCREEN_ON 控制，而这个布局属性始终生效） -->
+    <FrameLayout
+        android:id="@+id/playerContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 模式标签：直播 / 回看 -->
+    <TextView
+        android:id="@+id/tvModeTag"
+        style="@style/OsdText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="24dp"
+        android:background="#C0000000"
+        android:padding="8dp"
+        android:text="@string/live_tag"
+        android:visibility="gone" />
+
+    <!-- 暂停/播放提示：遥控器操作没有指针反馈，切换后画面正中闪一下图标 -->
+    <ImageView
+        android:id="@+id/ivPlayPause"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_play_pause"
+        android:contentDescription="@string/play_pause_hint"
+        android:padding="30dp"
+        android:src="@drawable/ic_pause_center"
+        android:visibility="gone" />
+
+    <!-- OSD 信息栏：半透明底色与画面区分 -->
+    <LinearLayout
+        android:id="@+id/osdPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="28dp"
+          android:layout_marginEnd="28dp"
+          android:layout_marginBottom="24dp"
+        android:background="@drawable/bg_osd_card"
+          android:elevation="8dp"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+          android:paddingEnd="24dp"
+          android:paddingTop="18dp"
+          android:paddingBottom="16dp"
+        android:visibility="gone">
+
+        <!--
+          信息框高度统一：
+          频道名固定 1 行、节目信息固定 2 行（minLines=maxLines=2），都加省略号。
+          原先两个都是 wrap_content 且不限行数，节目名一长就多占一行，
+          整个 OSD 面板跟着变高变矮 —— 换台时信息框会一跳一跳。
+        -->
+        <TextView
+            android:id="@+id/tvChannelName"
+            style="@style/OsdText.Large"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/tvProgramInfo"
+            style="@style/OsdText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:minLines="1" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvTime"
+                style="@style/OsdText.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1" />
+
+            <TextView
+                android:id="@+id/tvResolution"
+                style="@style/OsdText.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+
+            <TextView
+                android:id="@+id/tvSource"
+                style="@style/OsdText.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+
+        </LinearLayout>
+
+            <!-- 实时统计：单独一行（原来和 时间/分辨率/线路 挤一行，长了会折行） -->
+                        <TextView
+                android:id="@+id/tvStats"
+                style="@style/OsdText.Small"
+                android:layout_width="match_parent"
+            android:layout_marginTop="6dp"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:lineSpacingExtra="0dp"
+                android:ellipsize="end"
+                android:maxLines="2" />
+
+        <!-- 回看进度条 -->
+        <SeekBar
+            android:id="@+id/seekBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:max="100"
+            android:progressTint="@color/primary"
+            android:thumbTint="@color/primary"
+            android:visibility="gone" />
+
+        <!-- 进度条对应的时间：只看百分比不知道拖到了几点几分 -->
+        <TextView
+            android:id="@+id/tvSeekTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="2dp"
+            android:textSize="12sp"
+            android:textColor="#9aa7bd"
+            android:visibility="invisible" />
+    </LinearLayout>
+
+    <!-- 频道列表面板 -->
+    <LinearLayout
+        android:id="@+id/channelPanel"
+        android:layout_width="480dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:background="@drawable/bg_panel"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <!-- 分组 Tab -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvGroups"
+            android:layout_width="180dp"
+            android:layout_height="match_parent"
+            android:background="#B31A1D24"
+            android:padding="12dp" />
+
+        <!-- 频道列表 -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvChannels"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="12dp" />
+    </LinearLayout>
+
+    <!-- EPG 面板 -->
+    <LinearLayout
+        android:id="@+id/epgPanel"
+        android:layout_width="380dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@drawable/bg_panel"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvEpgTitle"
+            style="@style/OsdText.Large"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#B31A1D24"
+            android:padding="20dp"
+            android:text="@string/epg_title" />
+
+        <!-- 日期切换行：遥控器左右键或触屏点击按钮换日期（支持前 7 天回看 + 后 7 天预告） -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="8dp">
+
+            <Button
+                android:id="@+id/btnEpgPrev"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:focusable="true"
+                android:text="◀" />
+
+            <TextView
+                android:id="@+id/tvEpgDate"
+                style="@style/OsdText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_channel_item"
+                android:focusable="true"
+                android:gravity="center"
+                android:padding="12dp"
+                android:text="@string/epg_title" />
+
+            <Button
+                android:id="@+id/btnEpgNext"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:focusable="true"
+                android:text="▶" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvEpg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="12dp" />
+    </LinearLayout>
+
+    <!-- 顶部状态栏：加载 / 提示 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        style="@style/OsdText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="48dp"
+        android:background="#C0000000"
+        android:padding="16dp"
+        android:visibility="gone" />
+
+    <!-- 绑定等待遮罩 -->
+    <LinearLayout
+        android:id="@+id/bindingMask"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F00F1115"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvDeviceId"
+            style="@style/OsdText.Large"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/tvServerAddr"
+            style="@style/OsdText.Small"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" />
+
+        <TextView
+            android:id="@+id/tvBindStatus"
+            style="@style/OsdText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/bind_status_connecting" />
+
+        <TextView
+            android:id="@+id/tvWaitTip"
+            style="@style/OsdText.Small"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/bind_menu_hint" />
+
+        <!-- 平板/触屏没有菜单键，提供可见按钮；遥控器也可聚焦后按 OK -->
+        <Button
+            android:id="@+id/btnOpenSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:focusable="true"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            android:text="@string/bind_open_settings" />
+    </LinearLayout>
+
+    <!-- 启动画面：覆盖注册/心跳/频道加载/首帧起播全过程，就绪后淡出，避免直接看到黑屏和面板闪烁 -->
+    <FrameLayout
+        android:id="@+id/splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/background"
+        android:clickable="true"
+        android:focusable="true">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/ivSplashLogo"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:contentDescription="@string/app_name"
+                android:src="@mipmap/ic_launcher" />
+
+            <TextView
+                android:id="@+id/tvSplashName"
+                style="@style/OsdText.Large"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/app_name" />
+
+            <ProgressBar
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:indeterminateTint="#80FFFFFF" />
+
+            <TextView
+                style="@style/OsdText.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/splash_loading" />
+        </LinearLayout>
+    </FrameLayout>
+
+</FrameLayout>

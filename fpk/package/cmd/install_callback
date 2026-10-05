@@ -1,0 +1,134 @@
+#!/bin/bash
+# 安装回调：准备数据目录、记录向导参数、设置可执行位
+#
+# 关键约束：这个脚本**不能**因为「用户填的自定义数据目录用不了」而失败退出。
+# 应用以专用包用户运行（config/privilege: run-as=package），/vol<N> 下的用户目录
+# 默认对包用户不可写，向导里填的路径（尤其是原先硬编码的默认值）很可能建不出来。
+# 一旦这里 exit 1，整个安装就被判为失败，日志里只会留下：
+#   mkdir: cannot create directory '/vol1/1000/docker': Permission denied
+#   无法创建数据目录 /vol1/1000/docker/mediaiptv
+# 用户只能反复重装。现在改为「告警 + 回退到应用自己的持久化目录」，安装照常成功。
+set -u
+
+# fnOS 给生命周期脚本的 TRIM_* 环境不带 PATH：bash 自己会用内建默认值找命令，
+# 但 fork 出去的进程（node → ffmpeg）会继承一个没有 PATH 的环境，这里显式导出。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -z "${TRIM_APPDEST:-}" ]; then
+    if [ -d "${APP_ROOT}/app" ]; then
+        TRIM_APPDEST="${APP_ROOT}/app"
+    else
+        TRIM_APPDEST="/var/apps/mediaiptv/target"
+    fi
+fi
+if [ -z "${TRIM_PKGVAR:-}" ]; then
+    if [ -d "${APP_ROOT}/var" ]; then
+        TRIM_PKGVAR="${APP_ROOT}/var"
+    else
+        TRIM_PKGVAR="/var/apps/mediaiptv/var"
+    fi
+fi
+
+echo "开始安装 MediaIptv..."
+mkdir -p "${TRIM_PKGVAR}" || { echo "无法创建 ${TRIM_PKGVAR}"; exit 1; }
+
+# 1. 设置执行权限。
+#    fnOS 实际执行的是 cmd/* 与 app/ui/*.cgi，而原实现只 chmod 了 server/node_* 与
+#    ui/*.cgi，cmd/* 的可执行位完全依赖打包时的磁盘 mode；一旦在 Windows 上打过包或
+#    经 zip/scp 传输丢失 mode，安装后 cmd/main 无法执行且没有任何有效提示。
+#    wizard/ 与 config/ 是框架读取的 JSON 描述文件，保持 644。
+chmod 755 "${TRIM_APPDEST}"/server/node_* 2>/dev/null || true
+chmod 755 "${SCRIPT_DIR}"/* 2>/dev/null || true
+chmod 755 "${TRIM_APPDEST}"/ui/*.cgi 2>/dev/null || true
+
+# 2. 校验包内容完整（原实现从不检查，缺 Node 运行时也能「安装成功」）
+if [ ! -f "${TRIM_APPDEST}/server/app/src/index.js" ]; then
+    echo "安装包不完整：缺少 ${TRIM_APPDEST}/server/app/src/index.js"
+    exit 1
+fi
+if [ ! -f "${TRIM_APPDEST}/server/node_x86_64" ] && [ ! -f "${TRIM_APPDEST}/server/node_aarch64" ]; then
+    echo "安装包不完整：缺少内置 Node 运行时"
+    exit 1
+fi
+if [ ! -x "${SCRIPT_DIR}/main" ]; then
+    echo "安装包异常：cmd/main 不可执行"
+    exit 1
+fi
+
+# 3. 创建数据目录
+mkdir -p "${TRIM_PKGVAR}/data" || { echo "无法创建数据目录"; exit 1; }
+
+# 4. 记录安装向导变量（cmd/main 启动时读取）。
+#    密码文件只给属主读写：原实现用默认 umask 写成 0644，同机任何用户都能读到明文密码。
+umask 077
+PORT="${server_port:-9527}"
+case "${PORT}" in
+    ''|*[!0-9]*) PORT="9527" ;;
+esac
+if [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+    PORT="9527"
+fi
+
+ADMIN_PWD="${admin_password:-}"
+if [ -z "${ADMIN_PWD}" ]; then
+    # 不再回退到硬编码的 admin123：生成随机密码并写进安装日志，让用户必须显式获取
+    ADMIN_PWD=$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-16)
+    echo "未提供管理员密码，已生成随机初始密码：${ADMIN_PWD}"
+    echo "请安装完成后在管理后台「系统设置 → 修改密码」中更改。"
+fi
+
+echo "${PORT}" >"${TRIM_PKGVAR}/server_port" || { echo "无法写入端口配置"; exit 1; }
+echo "${ADMIN_PWD}" >"${TRIM_PKGVAR}/admin_password" || { echo "无法写入密码配置"; exit 1; }
+chmod 600 "${TRIM_PKGVAR}/admin_password" 2>/dev/null || true
+
+# 5. 可选的自定义数据目录（向导字段 wizard_data，留空 = 用应用默认目录）。
+#
+#    策略：路径不合法、建不出来、或建出来但写不进去，一律「告警 + 回退」，
+#    绝不中断安装；只有真写成功才记录 wizard_data_path，避免把一个用不了的目录
+#    交给 cmd/main 去启动（那会把「装不上」换成「装上了起不来」）。
+DATA_PATH_FILE="${TRIM_PKGVAR}/wizard_data_path"
+rm -f "${DATA_PATH_FILE}" 2>/dev/null || true
+
+# 必须同时满足：绝对路径、/vol<N>/... 形式、不含 .. 分量、能创建、能写入。
+# 只看 [ -w ] 并不可靠（部分文件系统/ACL 下会误报），所以最后真写一个探针文件。
+custom_data_dir_ok() {
+    local p="$1"
+    [ -n "${p}" ] || return 1
+    case "${p}" in
+        /vol[0-9]*/*) ;;
+        *) return 1 ;;
+    esac
+    case "/${p}/" in
+        */../*) return 1 ;;
+    esac
+    mkdir -p "${p}" 2>/dev/null || return 1
+    [ -d "${p}" ] || return 1
+    local probe="${p}/.mediaiptv-write-test.$$"
+    (umask 077 && : >"${probe}") 2>/dev/null || return 1
+    rm -f "${probe}" 2>/dev/null || true
+    return 0
+}
+
+if [ -n "${wizard_data:-}" ]; then
+    if custom_data_dir_ok "${wizard_data}"; then
+        if echo "${wizard_data}" >"${DATA_PATH_FILE}"; then
+            chmod 600 "${DATA_PATH_FILE}" 2>/dev/null || true
+            echo "数据目录：${wizard_data}"
+        else
+            rm -f "${DATA_PATH_FILE}" 2>/dev/null || true
+            echo "警告：无法记录数据目录 ${wizard_data}，改用默认目录 ${TRIM_PKGVAR}/data"
+        fi
+    else
+        echo "警告：数据目录 ${wizard_data} 不可用（应用以专用用户运行，只能写入已授权的目录），"
+        echo "      已自动改用应用默认数据目录 ${TRIM_PKGVAR}/data，安装继续。"
+        echo "      如需把数据库/录像放到别处：先在「应用设置 → 访问权限」里把目标目录授权给本应用，"
+        echo "      确认该目录对应用用户可写后，再修改数据目录。"
+    fi
+else
+    echo "数据目录：使用应用默认目录 ${TRIM_PKGVAR}/data"
+fi
+
+echo "安装回调执行完毕: 端口 ${PORT}"
+exit 0

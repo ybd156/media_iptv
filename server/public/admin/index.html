@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MediaIptv 管理后台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #0f1420; color: #d7dde8; }
+  a { color: #5aa9ff; }
+  /* 布局 */
+  #app { display: flex; min-height: 100vh; }
+  #sidebar { width: 200px; background: #161d2e; padding: 16px 0; flex-shrink: 0; }
+  #sidebar h1 { font-size: 18px; color: #fff; padding: 0 20px 16px; border-bottom: 1px solid #232c44; }
+  #sidebar .nav-item { padding: 12px 20px; cursor: pointer; color: #9aa7bd; border-left: 3px solid transparent; }
+  #sidebar .nav-item:hover { background: #1c2538; color: #d7dde8; }
+  #sidebar .nav-item.active { background: #1c2538; color: #5aa9ff; border-left-color: #5aa9ff; }
+  #main { flex: 1; padding: 24px; overflow-x: auto; }
+  .page { display: none; }
+  .page.active { display: block; }
+  h2 { font-size: 20px; margin-bottom: 16px; color: #fff; }
+  h3 { font-size: 15px; margin: 16px 0 8px; color: #b8c4d8; }
+  /* 卡片 */
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card { background: #161d2e; border: 1px solid #232c44; border-radius: 8px; padding: 20px 28px; min-width: 160px; }
+  .card .num { font-size: 30px; font-weight: bold; color: #5aa9ff; }
+  .card .label { color: #9aa7bd; margin-top: 6px; font-size: 13px; }
+  /* 表格 */
+  table { width: 100%; border-collapse: collapse; background: #161d2e; border-radius: 8px; overflow: hidden; margin-top: 8px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #232c44; font-size: 13px; }
+  th { background: #1c2538; color: #9aa7bd; font-weight: normal; }
+  tr:hover td { background: #1a2236; }
+  /* 按钮 */
+  button { background: #2a3document5; }
+  .btn { background: #233250; color: #d7dde8; border: 1px solid #34466b; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  .btn:hover { background: #2c3f66; }
+  .btn.primary { background: #2b6cb0; border-color: #3182ce; color: #fff; }
+  .btn.primary:hover { background: #3182ce; }
+  .btn.danger { background: #742a2a; border-color: #9b2c2c; color: #fff; }
+  .btn.small { padding: 3px 9px; font-size: 12px; }
+  /* 表单 */
+  input, select, textarea { background: #0f1420; border: 1px solid #2a3550; color: #d7dde8; border-radius: 4px; padding: 7px 10px; font-size: 13px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #5aa9ff; }
+  label { display: block; color: #9aa7bd; font-size: 13px; margin: 10px 0 4px; }
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .form-row > div { min-width: 160px; }
+  /* 弹窗 */
+  .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #161d2e; border: 1px solid #2a3550; border-radius: 8px; padding: 24px; width: 480px; max-height: 85vh; overflow-y: auto; }
+  .modal h3 { margin-top: 0; color: #fff; }
+  .modal .actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 10px; }
+  /* 登录 */
+  #login { position: fixed; inset: 0; background: #0f1420; display: flex; align-items: center; justify-content: center; z-index: 200; }
+  #login .box { background: #161d2e; border: 1px solid #232c44; border-radius: 10px; padding: 40px; width: 340px; }
+  #login h1 { font-size: 20px; margin-bottom: 20px; text-align: center; }
+  #login input { width: 100%; margin-bottom: 12px; }
+  #login .btn { width: 100%; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .tag.green { background: #22543d; color: #9ae6b4; }
+  .tag.yellow { background: #744210; color: #fbd38d; }
+  .tag.red { background: #742a2a; color: #feb2b2; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+  .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .msg.error { color: #fc8181; }
+  .msg.success { color: #68d391; }
+  pre.logview { background: #0a0e18; border: 1px solid #232c44; border-radius: 6px; padding: 14px; font-size: 12px; line-height: 1.6; max-height: 65vh; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .group-block { margin-bottom: 18px; }
+  .group-title { display: flex; align-items: center; gap: 10px; padding: 8px 0; color: #fff; font-size: 15px; }
+  .url-row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .url-row input { flex: 1; }
+</style>
+</head>
+<body>
+
+<!-- 登录页 -->
+<div id="login">
+  <div class="box">
+    <h1>MediaIptv 管理后台</h1>
+    <input id="loginUser" placeholder="用户名" value="admin">
+    <input id="loginPass" type="password" placeholder="密码">
+    <button class="btn primary" onclick="doLogin()">登 录</button>
+    <div class="msg error" id="loginMsg"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div id="sidebar">
+    <h1>📺 MediaIptv</h1>
+    <div class="nav-item active" data-page="overview" onclick="showPage('overview')">概览</div>
+    <div class="nav-item" data-page="channels" onclick="showPage('channels')">频道管理</div>
+    <div class="nav-item" data-page="sources" onclick="showPage('sources')">直播源</div>
+    <div class="nav-item" data-page="logos" onclick="showPage('logos')">台标管理</div>
+    <div class="nav-item" data-page="epg" onclick="showPage('epg')">EPG 管理</div>
+    <div class="nav-item" data-page="devices" onclick="showPage('devices')">设备管理</div>
+    <div class="nav-item" data-page="record" onclick="showPage('record')">录制回看</div>
+    <div class="nav-item" data-page="updates" onclick="showPage('updates')">客户端更新</div>
+    <div class="nav-item" data-page="settings" onclick="showPage('settings')">系统设置</div>
+    <div class="nav-item" data-page="diag" onclick="showPage('diag')">系统诊断</div>
+    <div class="nav-item" data-page="logs" onclick="showPage('logs')">日志查看</div>
+  </div>
+  <div id="main">
+
+    <!-- 概览 -->
+    <div class="page active" id="page-overview">
+      <h2>概览</h2>
+      <div class="cards" id="statCards"></div>
+    </div>
+
+    <!-- 频道管理 -->
+    <div class="page" id="page-channels">
+      <h2>频道管理</h2>
+      <div class="toolbar">
+        <button class="btn primary" onclick="openChannelModal()">+ 新增频道</button>
+        <button class="btn" onclick="openGroupModal()">+ 新增分组</button>
+        <button class="btn" onclick="document.getElementById('m3uFile').click()">导入 M3U 文件</button>
+        <input type="file" id="m3uFile" accept=".m3u,.m3u8,.txt" style="display:none" onchange="importM3uFile(this)">
+        <button class="btn" onclick="importM3uText()">粘贴 M3U 文本导入</button>
+        <input type="text" id="m3uUrl" placeholder="http://…/list.m3u 订阅链接" style="width:280px;padding:6px 10px;background:#0d1526;border:1px solid #2a3752;border-radius:6px;color:#dbe4f5">
+        <button class="btn" onclick="importM3uUrl()">从 URL 导入</button>
+        <button class="btn" onclick="mergeChannels()" title="按 epgId / 归一化名字把重复频道并成一条（线路合并）">重新整合现有频道</button>
+        <label style="color:#9aa7bd;font-size:12px;display:inline-flex;align-items:center;gap:4px">
+          <input type="checkbox" id="cfgMergeChannels" onchange="saveMergeSwitch(this)"> 导入订阅时合并同名频道
+        </label>
+        <span style="color:#9aa7bd">|</span>
+        <select id="batchSourceSel" style="max-width:180px"></select>
+        <button class="btn danger" onclick="batchDeleteBySource()">按源删除频道</button>
+        <span class="msg" id="importMsg"></span>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <input type="text" id="chSearch" placeholder="搜索频道名…" style="width:220px;padding:6px 10px;background:#0d1526;border:1px solid #2a3752;border-radius:6px;color:#dbe4f5" oninput="renderChannelList()">
+        <select id="chGroupFilter" style="max-width:200px" onchange="renderChannelList()"></select>
+        <button class="btn" onclick="clearChannelFilter()">清除筛选</button>
+        <span class="msg" id="chCount"></span>
+      </div>
+      <div id="channelList"></div>
+    </div>
+
+    <!-- 直播源 -->
+    <div class="page" id="page-sources">
+      <h2>直播源管理</h2>
+      <h3>添加订阅源</h3>
+      <div class="form-row">
+        <div><label>名称</label><input id="srcName" placeholder="如：肥猫聚合" style="width:160px"></div>
+        <div><label>订阅地址（M3U/TXT，留空则创建空源）</label><input id="srcUrl" placeholder="http(s)://..." style="width:320px"></div>
+        <div><label>播放模式</label>
+          <select id="srcPlayMode">
+            <option value="">跟随全局</option>
+            <option value="proxy">服务器代理</option>
+            <option value="direct">客户端直连（带 UA）</option>
+            <option value="direct_plain">客户端直连（不带 UA）</option>
+          </select></div>
+        <div><label>自动更新</label>
+          <select id="srcAutoUpdate"><option value="0">关闭</option><option value="1">每 12 小时</option></select></div>
+        <div><label>User-Agent（留空则用全局 UA；代理/直连/探测/录像都会用，点列表里的「UA 诊断」看最终生效值）</label><input id="srcUa" placeholder="如 VLC/3.0.20" style="width:200px"></div>
+        <div><button class="btn primary" onclick="addSource()">添加</button></div>
+        <div><span class="msg" id="sourceMsg"></span></div>
+      </div>
+      <h3>源列表</h3>
+      <table><thead><tr><th>ID</th><th>名称</th><th>订阅地址</th><th>频道数</th><th>播放模式</th><th>User-Agent</th><th>自动更新</th><th>最近更新</th><th>操作</th></tr></thead><tbody id="sourceList"></tbody></table>
+      <p style="color:#9aa7bd;font-size:12px;margin-top:8px">提示：刷新会替换该源全部频道（其它源与手动新增频道不受影响）；相同 URL 重复导入会自动转为刷新。</p>
+    </div>
+
+    <!-- 台标管理 -->
+    <div class="page" id="page-logos">
+      <h2>台标管理</h2>
+      <h3>台标源（可多选）</h3>
+      <div id="logoSourceList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
+      <div class="toolbar">
+        <button class="btn primary" onclick="matchLogosOnline(this)">在线匹配缺失台标</button>
+        <span class="msg" id="logoMsg"></span>
+      </div>
+      <p style="color:#9aa7bd;font-size:12px">仅对尚未设置台标的频道生效；按上面列表自上而下的顺序依次探测，先命中的源胜出。命中后由服务端代理抓取并缓存到本地，客户端不直连外网。</p>
+      <table><thead><tr><th>ID</th><th>台标</th><th>频道名</th><th>台标地址</th><th>操作</th></tr></thead><tbody id="logoList"></tbody></table>
+    </div>
+
+    <!-- EPG 管理 -->
+    <div class="page" id="page-epg">
+      <h2>EPG 管理</h2>
+      <h3>EPG 源</h3>
+      <div class="toolbar">
+        <input id="epgName" placeholder="名称（可选）" style="width:140px">
+        <input id="epgUrl" placeholder="XMLTV 地址 http(s)://..." style="width:360px">
+        <button class="btn primary" onclick="addEpgSource()">添加</button>
+        <button class="btn" onclick="syncEpg()">立即同步全部</button>
+        <span class="msg" id="epgMsg"></span>
+      </div>
+      <table><thead><tr><th>ID</th><th>名称</th><th>URL</th><th>最近同步</th><th>操作</th></tr></thead><tbody id="epgSourceList"></tbody></table>
+      <h3>节目预览</h3>
+      <div class="toolbar">
+        <select id="epgChannelSel"></select>
+        <input type="date" id="epgDate">
+        <button class="btn" onclick="previewEpg()">查询</button>
+      </div>
+      <table><thead><tr><th>开始</th><th>结束</th><th>节目</th></tr></thead><tbody id="epgProgramList"></tbody></table>
+    </div>
+
+    <!-- 设备管理 -->
+    <div class="page" id="page-devices">
+      <h2>设备管理</h2>
+      <h3>待审核设备</h3>
+      <table><thead><tr><th>设备 ID</th><th>型号</th><th>安卓版本</th><th>申请时间</th><th>操作</th></tr></thead><tbody id="pendingDevices"></tbody></table>
+      <h3>已绑定设备</h3>
+      <table><thead><tr><th>设备 ID</th><th>型号</th><th>安卓版本</th><th>最近在线</th><th>操作</th></tr></thead><tbody id="approvedDevices"></tbody></table>
+    </div>
+
+    <!-- 录制回看 -->
+    <div class="page" id="page-record">
+      <h2>录制回看</h2>
+      <div class="toolbar">
+        <button class="btn primary" onclick="openTaskModal()">+ 新增录制任务</button>
+      </div>
+      <h3>录像体检</h3>
+      <div id="recStats" style="color:#9aa7bd;font-size:12px;margin:6px 0 10px">加载中…</div>
+      <div class="toolbar">
+        <label style="color:#9aa7bd;font-size:12px">分片长度
+          <input id="recSegMin" type="number" min="1" max="720" style="width:64px"> 分钟</label>
+        <label style="color:#9aa7bd;font-size:12px">录像目录
+          <input id="recDir" placeholder="留空 = 数据目录/records" style="width:230px"></label>
+        <button class="btn" onclick="saveRecDir()">保存目录</button>
+        <label style="color:#9aa7bd;font-size:12px">录像编码
+          <select id="recEncode" onchange="saveRecEncode(this)">
+            <option value="copy">-c copy（原样存，零转码）</option>
+            <option value="hevc">H.265 核显压缩（体积约小一半）</option>
+            <option value="h264">H.264 核显压缩（兼容性更好）</option>
+          </select></label>
+        <button class="btn" onclick="saveRecSegMin()">保存</button>
+        <button class="btn" onclick="loadRecStats()">刷新体检</button>
+      </div>
+
+      <h3>录制任务</h3>
+      <table><thead><tr><th>ID</th><th>频道</th><th>模式</th><th>时间段</th><th>保留天数</th><th>状态</th><th>操作</th></tr></thead><tbody id="taskList"></tbody></table>
+      <h3>录像列表</h3>
+      <div class="toolbar">
+        <select id="recChannelSel"><option value="">全部频道</option></select>
+        <input type="date" id="recDate">
+        <button class="btn" onclick="loadRecordings()">查询</button>
+        <button class="btn danger" onclick="bulkDelRecordings('channel')">删除该频道全部录像</button>
+        <button class="btn danger" onclick="bulkDelRecordings('before')">删除该日期之前的录像</button>
+      </div>
+      <table><thead><tr><th>ID</th><th>频道</th><th>日期</th><th>开始</th><th>结束</th><th>大小</th><th>文件</th><th>操作</th></tr></thead><tbody id="recordingList"></tbody></table>
+    </div>
+
+    <!-- 客户端更新 -->
+    <div class="page" id="page-updates">
+      <h2>客户端更新</h2>
+      <p style="color:#9aa7bd;font-size:12px">
+        上传新的 APK，客户端启动时会自动检查并提示升级（设置页也能手动检查）。
+        版本号由服务端从 APK 里直接读取，不需要手填 —— 手填错了会导致客户端永远提示有新版。
+        <b>只保留最近 2 个版本</b>，更早的会自动删除。<br>
+        注意：安装包必须是用同一套密钥签名的 release 包，否则客户端无法覆盖安装。
+      </p>
+      <div class="toolbar">
+        <input type="file" id="updFile" accept=".apk,application/vnd.android.package-archive">
+        <input id="updNotes" placeholder="更新说明（可选，会显示给用户）" style="width:280px">
+        <button class="btn primary" onclick="uploadUpdate(this)">上传并发布</button>
+        <span class="msg" id="updMsg"></span>
+      </div>
+      <h3>已发布</h3>
+      <table><thead><tr><th>ID</th><th>版本</th><th>versionCode</th><th>大小</th><th>sha256</th><th>更新说明</th><th>操作</th></tr></thead><tbody id="updList"></tbody></table>
+    </div>
+
+    <!-- 系统设置 -->
+    <div class="page" id="page-diag">
+      <h2>系统诊断</h2>
+      <div class="toolbar">
+        <button class="btn primary" onclick="loadDiagnostics()">刷新</button>
+        <span class="msg" id="diagMsg"></span>
+      </div>
+      <p style="color:#9aa7bd;font-size:13px;margin-top:0">
+        这里只是把服务端的真实状态摊开显示，不做任何修改。
+        这个项目里出现过好几类「界面上有开关、实际没生效」的问题，所以凡是能直接读出来的状态都列在这里，
+        省得去翻代码或日志。
+      </p>
+      <div id="diagBody"></div>
+    </div>
+
+    <div class="page" id="page-settings">
+      <h2>系统设置</h2>
+      <h3>客户端播放配置</h3>
+      <div class="form-row">
+        <div style="flex-basis:100%">
+          <label>这一组是**默认值**，不是强制值</label>
+          <small style="color:#9aa7bd;display:block">
+            客户端取值顺序：<b>客户端设置页里用户改过的 &gt; 这里下发的 &gt; 客户端内置默认</b>。
+            也就是说用户自己动过的那一项，这里改不动它。
+            改动由客户端心跳取走，最长 60 秒后生效，且引擎/偏移变化时会重连当前频道。
+          </small>
+        </div>
+      </div>
+      <div class="form-row">
+        <div><label>播放引擎</label><select id="cfgEngine"><option value="exo">exo</option><option value="ijk">ijk</option></select>
+          <small style="color:#9aa7bd;display:block;margin-top:2px">客户端默认用哪个内核（ijk 内置 AV3A 解码器）</small></div>
+        <div><label>缓冲 (ms)</label><input id="cfgBuffer" type="number">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">客户端播放缓冲。客户端设置页里缓冲只有低/中/高三档，用户选过档位就以客户端的为准</small></div>
+        <div><label>直播偏移 (ms)</label><input id="cfgOffset" type="number">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">贴直播边缘播放的目标偏移；越大越稳但画面越滞后</small></div>
+        <div><label>缩放模式</label><select id="cfgScale"><option value="fit">fit</option><option value="fill">fill</option><option value="zoom">zoom</option><option value="169">16:9</option></select>
+          <small style="color:#9aa7bd;display:block;margin-top:2px">客户端画面比例默认值</small></div>
+        <div><label>自动开播</label><select id="cfgAuto" disabled><option value="false">否</option><option value="true">是</option></select>
+          <small style="color:#9aa7bd;display:block;margin-top:2px"><b>客户端暂未实现这一项</b>：目前总是自动播放上次观看的频道，所以这里置灰</small></div>
+        <div><button class="btn primary" onclick="saveSettings()">保存</button></div>
+      </div>
+      <h3>直播源访问</h3>
+      <div class="form-row">
+        <div><label>播放模式</label>
+          <select id="cfgPlayMode">
+            <option value="proxy">服务器代理（推荐，隐藏原始地址）</option>
+            <option value="direct">客户端直连（携带 User-Agent）</option>
+            <option value="direct_plain">客户端直连（不带 User-Agent）</option>
+          </select></div>
+        <div><label>全局 User-Agent（留空则不携带）</label><input id="cfgUa" type="text" placeholder="如 VLC/3.0.20 LibVLC/3.0.20"></div>
+        <div><label>流地址签名鉴权</label>
+          <select id="cfgStreamAuth">
+            <option value="1">开启（推荐，仅持有签名的客户端可拉流）</option>
+            <option value="0">关闭（兼容旧版客户端）</option>
+          </select></div>
+        <div><button class="btn primary" onclick="saveStreamSettings()">保存</button></div>
+      </div>
+      <h3>线路画质探测</h3>
+      <div class="form-row">
+        <div><label>后台用 ffprobe 检测每条线路分辨率，客户端自动优先高清线路</label></div>
+        <div><button class="btn" onclick="startProbe(false)">检测新线路</button></div>
+        <div><button class="btn" onclick="startProbe(true)">重新检测全部</button></div>
+        <div><span class="msg" id="probeMsg"></span></div>
+      </div>
+      <h3>时移（直播暂停 / 回退）</h3>
+      <div class="form-row">
+        <div style="flex-basis:100%">
+          <small style="color:#9aa7bd">
+            开启后客户端可以暂停直播、往回拖。服务端按需把直播流转成滚动 HLS：
+            <b>只有真的有客户端在看时才拉起 ffmpeg</b>，空闲 2 分钟自动停掉并清理分片目录。
+            代价是比直连多几秒延迟，所以客户端那个「时移回看」开关默认是关的。
+          </small>
+        </div>
+      </div>
+      <div class="form-row">
+        <div><label>时移</label>
+          <select id="cfgTimeshift">
+            <option value="0">关闭</option>
+            <option value="1">开启</option>
+          </select></div>
+        <div><label>窗口长度（分钟，5~360）</label><input id="cfgTimeshiftWindow" type="number" min="5" max="360">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">能往回拖多久。窗口越长占的磁盘和内存越多（每 4 秒一个分片）</small></div>
+        <div><button class="btn primary" onclick="saveTimeshiftSettings()">保存</button></div>
+      </div>
+      <div class="form-row">
+        <div><span class="msg" id="timeshiftStatus">正在读取…</span></div>
+        <div><button class="btn" onclick="loadTimeshiftStatus()">刷新状态</button></div>
+        <div><button class="btn danger" onclick="stopTimeshift()">停止所有会话</button></div>
+      </div>
+      <h3>EPG 自动同步</h3>
+      <div class="form-row">
+        <div><label>每天 06:00 自动同步</label>
+          <select id="epgAuto"><option value="0">关闭</option><option value="1">开启</option></select></div>
+        <div><button class="btn primary" onclick="saveEpgAuto()">保存</button></div>
+      </div>
+      <h3>客户端更新（GitHub）</h3>
+      <div class="form-row">
+        <div style="flex-basis:100%">
+          <small style="color:#9aa7bd;display:block">
+            填了仓库之后，客户端「检查更新」改从 <b>GitHub Release</b> 读版本号与更新说明，
+            APK 也从 GitHub 下载（可配加速前缀）；客户端不需要改动，它仍然只问本服务端。
+            <b>留空则继续用上面「客户端更新」里本地上传的包</b>，行为与以前一致。
+          </small>
+        </div>
+      </div>
+      <div class="form-row">
+        <div><label>仓库 (owner/repo)</label><input id="cfgGhRepo" placeholder="yourname/mediaiptv">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">只填 owner/repo，别填整个网址</small></div>
+        <div><label>下载加速前缀</label><input id="cfgGhMirror" placeholder="https://ghproxy.net/">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">留空＝用 github.com 原始地址。国内建议填镜像前缀（这类域名会变，失效时改这里即可）</small></div>
+        <div><label>versionCode 兜底</label><input id="cfgGhCode" type="number" placeholder="留空">
+          <small style="color:#9aa7bd;display:block;margin-top:2px">Release 正文没写 versionCode 时用这个；用发布脚本上传会自动写</small></div>
+        <div><label>GitHub Token</label><input id="cfgGhToken" type="password" placeholder="私有仓库或撞速率限制时才需要">
+          <small style="color:#9aa7bd;display:block;margin-top:2px" id="cfgGhTokenHint">留空＝不改动已保存的 token</small></div>
+        <div><button class="btn primary" onclick="saveGithub()">保存</button>
+          <button class="btn" onclick="testGithub()">保存并测试连接</button></div>
+      </div>
+      <div class="msg" id="ghMsg"></div>
+      <h3>修改管理员密码</h3>
+      <div class="form-row">
+        <div><label>旧密码</label><input id="oldPass" type="password"></div>
+        <div><label>新密码</label><input id="newPass" type="password"></div>
+        <div><button class="btn primary" onclick="changePassword()">修改</button></div>
+      </div>
+      <div class="msg" id="settingsMsg"></div>
+    </div>
+
+    <!-- 日志 -->
+    <div class="page" id="page-logs">
+      <h2>日志查看</h2>
+      <div class="toolbar">
+        <button class="btn" onclick="loadLogs()">刷新</button>
+      </div>
+      <pre class="logview" id="logView"></pre>
+    </div>
+
+  </div>
+</div>
+
+<!-- 频道编辑弹窗 -->
+<div class="modal-mask" id="channelModal">
+  <div class="modal">
+    <h3 id="channelModalTitle">新增频道</h3>
+    <input type="hidden" id="chId">
+    <label>名称</label><input id="chName" style="width:100%">
+    <label>分组</label><select id="chGroup" style="width:100%"></select>
+    <label>EPG ID (tvg-id)</label><input id="chEpg" style="width:100%">
+    <label>LOGO 地址</label><input id="chLogo" style="width:100%">
+    <label>直播源 URL（每行一个，支持 url|User-Agent=xxx）</label>
+    <textarea id="chUrls" rows="4" style="width:100%"></textarea>
+    <div class="actions">
+      <button class="btn" onclick="closeModal('channelModal')">取消</button>
+      <button class="btn primary" onclick="saveChannel()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 分组弹窗 -->
+<div class="modal-mask" id="groupModal">
+  <div class="modal">
+    <h3>新增分组</h3>
+    <label>分组名称</label><input id="grpName" style="width:100%">
+    <div class="actions">
+      <button class="btn" onclick="closeModal('groupModal')">取消</button>
+      <button class="btn primary" onclick="saveGroup()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 录制任务弹窗 -->
+<div class="modal-mask" id="taskModal">
+  <div class="modal">
+    <h3>新增录制任务</h3>
+    <label>频道</label><select id="taskChannel" style="width:100%"></select>
+    <label>模式</label>
+    <select id="taskMode" style="width:100%" onchange="toggleTaskTime()">
+      <option value="always">全天候录制</option>
+      <option value="daily">每日定时录制</option>
+    </select>
+    <div id="taskTimeRow" style="display:none">
+      <label>开始时间</label><input id="taskStart" type="time" value="00:00" style="width:100%">
+      <label>结束时间</label><input id="taskEnd" type="time" value="23:59" style="width:100%">
+    </div>
+    <label>保留天数</label><input id="taskRetention" type="number" value="7" style="width:100%">
+    <div class="actions">
+      <button class="btn" onclick="closeModal('taskModal')">取消</button>
+      <button class="btn primary" onclick="saveTask()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- UA 诊断：把四层优先级摊开，直接看最终哪一层生效 -->
+<div class="modal-mask" id="uaModal">
+  <div class="modal">
+    <h3>User-Agent 诊断</h3>
+    <div id="uaModalBody" style="font-size:13px;line-height:1.7"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="closeModal('uaModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= 基础设施 ================= */
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem('adminToken') || '';
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, opts.headers || {});
+  if (opts.body && typeof opts.body !== 'string' && !(opts.body instanceof FormData)) opts.body = JSON.stringify(opts.body);
+  if (opts.body instanceof FormData) delete opts.headers['Content-Type'];
+  const resp = await fetch('/admin/api' + path, opts);
+  const data = await resp.json().catch(() => ({ code: resp.status, msg: 'bad response' }));
+  if (resp.status === 401 && path !== '/login') {
+    logout();
+    throw new Error('未授权，请重新登录');
+  }
+  if (data.code !== 0) throw new Error(data.msg || 'error ' + data.code);
+  return data.data;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  return new Date(ts * 1000).toLocaleString('zh-CN');
+}
+function fmtBytes(n) {
+  if (n > 1 << 30) return (n / (1 << 30)).toFixed(2) + ' GB';
+  if (n > 1 << 20) return (n / (1 << 20)).toFixed(2) + ' MB';
+  return (n / 1024).toFixed(1) + ' KB';
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ================= 事件委托 =================
+ * 频道名 / 分组名 / 直播源名 / 设备 ID 都来自外部输入（M3U 订阅、客户端上报），
+ * 不能塞进 onclick="fn('...')" 这样的字符串里：esc() 做的是 HTML 实体转义，
+ * 而浏览器会先把属性值 HTML 解码、再当作 JS 解析，于是 &#39; 又变回 '，
+ * 成功逃逸出字符串字面量——导入一份带恶意 group-title 的 M3U 就能窃取
+ * localStorage 里的 adminToken。改用 data-* 承载数据后，esc() 回到它本来
+ * 正确的（HTML 属性）语境，注入面消失。
+ */
+const ACTIONS = {
+  'rename-group':   (d) => renameGroup(+d.id, d.name),
+  'rename-source':  (d) => renameSource(+d.id, d.name),
+  'del-source':     (d) => delSource(+d.id, d.name),
+  'set-logo':       (d) => setChannelLogo(+d.id, d.name, d.logo),
+  'approve-device': (d) => approveDevice(d.id),
+  'reject-device':  (d) => rejectDevice(d.id),
+  'kick-device':    (d) => kickDevice(d.id),
+};
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const fn = ACTIONS[el.dataset.act];
+  if (fn) fn(el.dataset, el);
+});
+
+/* ================= 登录 ================= */
+async function doLogin() {
+  try {
+    const data = await api('/login', { method: 'POST', body: { username: $('loginUser').value, password: $('loginPass').value } });
+    token = data.token;
+    localStorage.setItem('adminToken', token);
+    enterApp();
+  } catch (e) { $('loginMsg').textContent = e.message; }
+}
+function logout() {
+  localStorage.removeItem('adminToken');
+  token = '';
+  $('login').style.display = 'flex';
+  $('app').style.display = 'none';
+}
+function enterApp() {
+  $('login').style.display = 'none';
+  $('app').style.display = 'flex';
+  loadAll();
+}
+$('loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+/* ================= 页面切换 ================= */
+function showPage(name) {
+  document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.page === name));
+  document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
+  if (name === 'overview') loadStats();
+  if (name === 'channels') { loadChannels(); loadMergeSwitch(); }
+  if (name === 'sources') loadSources();
+  if (name === 'logos') { loadLogos(); loadLogoSources(); }
+  if (name === 'epg') { loadEpgSources(); fillChannelSelects(); }
+  if (name === 'devices') loadDevices();
+  if (name === 'record') { loadTasks(); loadRecordings(); fillChannelSelects(); loadRecStats(); loadRecEncode(); }
+  if (name === 'updates') loadUpdates();
+  if (name === 'settings') loadSettings();
+  if (name === 'diag') loadDiagnostics();
+  if (name === 'logs') loadLogs();
+}
+function loadAll() { loadStats(); }
+
+/* ================= 概览 ================= */
+async function loadStats() {
+  try {
+    const s = await api('/stats');
+    $('statCards').innerHTML = [
+      ['频道数', s.channelCount], ['设备数', s.deviceCount], ['在线设备', s.onlineCount],
+      ['待审核', s.pendingDevices], ['录像占用', fmtBytes(s.recordBytes)],
+    ].map(([l, v]) => `<div class="card"><div class="num">${v}</div><div class="label">${l}</div></div>`).join('');
+  } catch (e) { console.error(e); }
+}
+
+/* ================= 频道管理 ================= */
+let groupsCache = [];
+let channelsCache = [];
+
+async function loadGroups() { groupsCache = await api('/groups'); }
+
+async function loadChannels() {
+  await loadGroups();
+  channelsCache = await api('/channels');
+  // 同步刷新"按源删除"下拉
+  try {
+    const srcs = await api('/sources');
+    $('batchSourceSel').innerHTML = '<option value="">选择源…</option>' +
+      srcs.map((s) => `<option value="${s.id}">${esc(s.name)}（${s.channel_count}）</option>`).join('');
+  } catch (_) { /* 忽略 */ }
+  renderChannelList();
+}
+
+const CH_TABLE_HEAD = '<th>ID</th><th>名称</th><th>来源</th><th>EPG ID</th><th>源数</th><th>操作</th>';
+
+function channelRow(c) {
+  return `<tr>
+        <td>${c.id}</td><td>${c.logo ? `<img src="/api/client/logo/${c.id}" style="height:20px;vertical-align:middle;margin-right:6px">` : ''}${esc(c.name)}</td>
+        <td>${esc(c.source_name || '-')}</td><td>${esc(c.epg_id)}</td><td>${c.urls.length}</td>
+        <td>
+          <button class="btn small" onclick="checkChannel(${c.id}, this)">检测</button>
+          <button class="btn small" onclick="openChannelModal(${c.id})">编辑</button>
+          <button class="btn small danger" onclick="delChannel(${c.id})">删除</button>
+        </td></tr>`;
+}
+
+/**
+ * 渲染频道列表：搜索 + 分组筛选。
+ *
+ * 纯前端过滤 —— channelsCache 里已经有全部频道，不发请求，输入即时生效。
+ * 筛选时平铺成一个表（按名字排序），不筛选时按分组展示。
+ *
+ * 另外补上了「未分组」一块：原实现只遍历 groupsCache，
+ * group_id 为空、或分组被删后变成悬空的频道**在后台根本不显示** ——
+ * 而删除分组的提示写的偏偏是"组内频道会保留但变为未分组"，
+ * 也就是删完之后那些频道再也编辑不了、删不掉。
+ */
+function renderChannelList() {
+  const q = ($('chSearch').value || '').trim().toLowerCase();
+  const prev = $('chGroupFilter').value;
+  $('chGroupFilter').innerHTML = '<option value="">全部分组</option>' +
+    groupsCache.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('') +
+    '<option value="__none__">未分组</option>';
+  $('chGroupFilter').value = prev;
+  const gf = prev;
+
+  const known = new Set(groupsCache.map((g) => g.id));
+  const isOrphan = (c) => !known.has(c.group_id);
+  const hit = channelsCache.filter((c) => {
+    if (q && !String(c.name || '').toLowerCase().includes(q)) return false;
+    if (gf === '__none__') return isOrphan(c);
+    if (gf) return String(c.group_id) === gf;
+    return true;
+  });
+
+  let html;
+  if (q || gf) {
+    // 有筛选条件：平铺展示命中结果，直接看到"到底有没有"
+    const sorted = hit.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+    html = `<div class="group-block">
+      <div class="group-title">筛选结果（${sorted.length}）</div>
+      <table><thead><tr>${CH_TABLE_HEAD}</tr></thead><tbody>
+      ${sorted.map(channelRow).join('')}
+      </tbody></table></div>`;
+  } else {
+    const byGroup = new Map();
+    for (const c of hit) {
+      if (!byGroup.has(c.group_id)) byGroup.set(c.group_id, []);
+      byGroup.get(c.group_id).push(c);
+    }
+    html = '';
+    for (const g of groupsCache) {
+      const list = byGroup.get(g.id) || [];
+      html += `<div class="group-block">
+      <div class="group-title">📁 ${esc(g.name)}（${list.length}）
+        <button class="btn small" data-act="rename-group" data-id="${g.id}" data-name="${esc(g.name)}">改名</button>
+        <button class="btn small danger" onclick="delGroup(${g.id})">删除分组</button>
+      </div>
+      <table><thead><tr>${CH_TABLE_HEAD}</tr></thead><tbody>
+      ${list.map(channelRow).join('')}
+      </tbody></table></div>`;
+    }
+    const orphans = hit.filter(isOrphan);
+    if (orphans.length) {
+      html += `<div class="group-block">
+      <div class="group-title">📁 未分组（${orphans.length}）
+        <span style="color:#9aa7bd;font-weight:normal">不属于任何分组，客户端会单独显示为一组</span>
+      </div>
+      <table><thead><tr>${CH_TABLE_HEAD}</tr></thead><tbody>
+      ${orphans.map(channelRow).join('')}
+      </tbody></table></div>`;
+    }
+  }
+
+  $('chCount').textContent = `共 ${channelsCache.length} 个频道` +
+    ((q || gf) ? `，命中 ${hit.length} 个` : '');
+  $('channelList').innerHTML = html ||
+    `<p style="color:#9aa7bd">${(q || gf) ? '没有匹配的频道' : '暂无频道，请新增或导入 M3U'}</p>`;
+}
+
+function clearChannelFilter() {
+  $('chSearch').value = '';
+  $('chGroupFilter').value = '';
+  renderChannelList();
+}
+
+async function checkChannel(id, btn) {
+  btn.textContent = '检测中...'; btn.disabled = true;
+  try {
+    const r = await api(`/channels/${id}/check`);
+    btn.textContent = r.online ? `在线 ${r.elapsedMs}ms` : `离线(${r.status})`;
+    btn.style.color = r.online ? '#68d391' : '#fc8181';
+  } catch (e) { btn.textContent = '检测失败'; btn.style.color = '#fc8181'; }
+  setTimeout(() => { btn.textContent = '检测'; btn.disabled = false; btn.style.color = ''; }, 4000);
+}
+
+function openGroupModal() { $('grpName').value = ''; $('groupModal').classList.add('show'); }
+async function saveGroup() {
+  const name = $('grpName').value.trim();
+  if (!name) return;
+  await api('/groups', { method: 'POST', body: { name } });
+  closeModal('groupModal'); loadChannels();
+}
+async function renameGroup(id, oldName) {
+  const name = prompt('新的分组名称', oldName);
+  if (!name || name === oldName) return;
+  await api('/groups/' + id, { method: 'PUT', body: { name } });
+  loadChannels();
+}
+async function delGroup(id) {
+  if (!confirm('删除分组？组内频道会保留但变为未分组。')) return;
+  await api('/groups/' + id, { method: 'DELETE' });
+  loadChannels();
+}
+
+function openChannelModal(id) {
+  $('chGroup').innerHTML = groupsCache.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  if (id) {
+    const c = channelsCache.find((x) => x.id === id);
+    if (!c) return;
+    $('channelModalTitle').textContent = '编辑频道 #' + id;
+    $('chId').value = c.id; $('chName').value = c.name; $('chGroup').value = c.group_id || '';
+    $('chEpg').value = c.epg_id || ''; $('chLogo').value = c.logo || '';
+    $('chUrls').value = c.urls.map((u) => u.url).join('\n');
+  } else {
+    $('channelModalTitle').textContent = '新增频道';
+    $('chId').value = ''; $('chName').value = ''; $('chEpg').value = ''; $('chLogo').value = ''; $('chUrls').value = '';
+  }
+  $('channelModal').classList.add('show');
+}
+async function saveChannel() {
+  const body = {
+    name: $('chName').value.trim(),
+    groupId: parseInt($('chGroup').value, 10) || null,
+    epgId: $('chEpg').value.trim(),
+    logo: $('chLogo').value.trim(),
+    urls: $('chUrls').value.split('\n').map((s) => s.trim()).filter(Boolean),
+  };
+  if (!body.name) return alert('请填写名称');
+  const id = $('chId').value;
+  if (id) await api('/channels/' + id, { method: 'PUT', body });
+  else await api('/channels', { method: 'POST', body });
+  closeModal('channelModal'); loadChannels();
+}
+async function delChannel(id) {
+  if (!confirm('删除该频道及其所有源？')) return;
+  const withRec = confirm('是否连同该频道的**全部录像**一起删除？\n\n确定 = 连录像一起删（不可恢复）\n取消 = 只删频道，录像保留');
+  const r = await api('/channels/' + id + (withRec ? '?withRecordings=1' : ''), { method: 'DELETE' });
+  if (withRec) alert('已同时删除 ' + ((r && r.removedRecordings) || 0) + ' 条录像');
+  loadChannels();
+}
+
+async function batchDeleteBySource() {
+  const sid = $('batchSourceSel').value;
+  if (!sid) { alert('请先选择要删除的源'); return; }
+  const label = $('batchSourceSel').selectedOptions[0].textContent;
+  if (!confirm(`删除源「${label}」下的全部频道和线路？（源记录保留，可随时重新导入）`)) return;
+  const r = await api('/channels/batch-delete', { method: 'POST', body: { sourceId: parseInt(sid, 10) } });
+  $('importMsg').textContent = `已删除 ${r.removedChannels} 个频道`;
+  $('importMsg').className = 'msg success';
+  loadChannels();
+}
+
+async function importM3uFile(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  $('importMsg').textContent = '导入中...';
+  try {
+    const r = await api('/channels/import', { method: 'POST', body: fd });
+    if (!r.importedChannels) {
+      // 解析出 0 个频道却报"导入完成"是误导：用户会以为成功了，实际什么都没进来
+      $('importMsg').textContent = '没有解析出任何频道。支持的格式：#EXTINF 的 M3U、每行「频道名,地址」、或一行一个播放地址';
+      $('importMsg').className = 'msg error';
+    } else {
+      $('importMsg').textContent = `导入完成：新增 ${r.importedChannels} 频道 / ${r.importedUrls} 源，跳过已存在 ${r.skipped}`;
+      $('importMsg').className = 'msg success';
+    }
+    loadChannels();
+  } catch (e) { $('importMsg').textContent = e.message; $('importMsg').className = 'msg error'; }
+  input.value = '';
+}
+function importM3uText() {
+  const text = prompt('粘贴 M3U 文本内容（大文件建议用文件导入）');
+  if (!text) return;
+  api('/channels/import', { method: 'POST', body: { text } }).then((r) => {
+    $('importMsg').textContent = `导入完成：新增 ${r.importedChannels} 频道 / ${r.importedUrls} 源，跳过已存在 ${r.skipped}`;
+    $('importMsg').className = 'msg success';
+    loadChannels();
+  }).catch((e) => { $('importMsg').textContent = e.message; $('importMsg').className = 'msg error'; });
+}
+
+async function importM3uUrl() {
+  const url = $('m3uUrl').value.trim();
+  if (!url) { $('importMsg').textContent = '请输入订阅链接'; $('importMsg').className = 'msg error'; return; }
+  $('importMsg').textContent = '正在从 URL 拉取并导入...';
+  $('importMsg').className = 'msg';
+  try {
+    const r = await api('/channels/import-url', { method: 'POST', body: { url } });
+    $('importMsg').textContent = `导入完成：新增 ${r.importedChannels} 频道 / ${r.importedUrls} 源，跳过已存在 ${r.skipped}`;
+    $('importMsg').className = 'msg success';
+    loadChannels();
+  } catch (e) { $('importMsg').textContent = e.message; $('importMsg').className = 'msg error'; }
+}
+
+/* ================= EPG ================= */
+async function loadEpgSources() {
+  const list = await api('/epg/sources');
+  $('epgSourceList').innerHTML = list.map((s) => `<tr>
+    <td>${s.id}</td><td>${esc(s.name)}</td><td style="word-break:break-all">${esc(s.url)}</td>
+    <td>${fmtTime(s.updated_at)}</td>
+    <td><button class="btn small danger" onclick="delEpgSource(${s.id})">删除</button></td></tr>`).join('');
+}
+async function addEpgSource() {
+  const url = $('epgUrl').value.trim();
+  if (!url) return;
+  await api('/epg/sources', { method: 'POST', body: { name: $('epgName').value.trim(), url } });
+  $('epgUrl').value = ''; $('epgName').value = '';
+  loadEpgSources();
+}
+async function delEpgSource(id) { await api('/epg/sources/' + id, { method: 'DELETE' }); loadEpgSources(); }
+async function syncEpg() {
+  $('epgMsg').textContent = '同步中（大文件可能需要数十秒）...';
+  try {
+    const r = await api('/epg/sync', { method: 'POST', body: {} });
+    $('epgMsg').textContent = `同步完成，共 ${r.programmes} 条节目`;
+    $('epgMsg').className = 'msg success';
+    loadEpgSources();
+  } catch (e) { $('epgMsg').textContent = e.message; $('epgMsg').className = 'msg error'; }
+}
+async function previewEpg() {
+  const cid = $('epgChannelSel').value;
+  const date = $('epgDate').value;
+  if (!cid || !date) return;
+  $('epgProgramList').innerHTML = '<tr><td colspan="3">查询中...</td></tr>';
+  try {
+    const data = await api(`/epg/preview?channelId=${cid}&date=${date}`);
+    $('epgProgramList').innerHTML = (data.programs || []).map((p) =>
+      `<tr><td>${p.start}</td><td>${p.end}</td><td>${esc(p.title)}${p.hasRecord ? ' <span class="tag green">可回看</span>' : ''}</td></tr>`).join('')
+      || `<tr><td colspan="3">无节目数据（EPG ID: ${esc(data.epgId) || '未配置'}）</td></tr>`;
+  } catch (e) {
+    $('epgProgramList').innerHTML = `<tr><td colspan="3">${esc(e.message)}</td></tr>`;
+  }
+}
+
+/* ================= 直播源 ================= */
+const PLAY_MODE_NAMES = { '': '跟随全局', proxy: '服务器代理', direct: '直连(带UA)', direct_plain: '直连(不带UA)' };
+
+async function loadSources() {
+  const list = await api('/sources');
+  $('sourceList').innerHTML = list.map((s) => `<tr>
+    <td>${s.id}</td><td>${esc(s.name)}</td>
+    <td style="word-break:break-all;max-width:280px">${esc(s.url) || '<span style="color:#9aa7bd">本地导入</span>'}</td>
+    <td>${s.channel_count}</td>
+    <td><select onchange="updateSource(${s.id}, { playMode: this.value })">
+      ${Object.entries(PLAY_MODE_NAMES).map(([v, n]) => `<option value="${v}" ${s.play_mode === v ? 'selected' : ''}>${n}</option>`).join('')}
+    </select></td>
+    <td><input value="${esc(s.ua || '')}" placeholder="留空用全局" style="width:160px" onchange="updateSource(${s.id}, { ua: this.value.trim() })"></td>
+    <td><select ${s.url ? '' : 'disabled'} onchange="updateSource(${s.id}, { autoUpdate: this.value === '1' })">
+      <option value="0" ${!s.auto_update ? 'selected' : ''}>关闭</option>
+      <option value="1" ${s.auto_update ? 'selected' : ''}>每 12 小时</option>
+    </select></td>
+    <td>${s.url ? fmtTime(s.updated_at) : '-'}</td>
+    <td>${s.url ? `<button class="btn small" onclick="refreshSource(${s.id}, this)">立即更新</button>` : ''}
+        <button class="btn small" onclick="explainUa(${s.id})">UA 诊断</button>
+        <button class="btn small" data-act="rename-source" data-id="${s.id}" data-name="${esc(s.name)}">改名</button>
+        <button class="btn small danger" data-act="del-source" data-id="${s.id}" data-name="${esc(s.name)}">删除</button></td></tr>`).join('')
+    || '<tr><td colspan="9">暂无直播源，请添加订阅或到频道管理导入</td></tr>';
+}
+
+/**
+ * UA 诊断：把四层优先级摊开，直接看最终哪一层生效。
+ * 四条取流路径（服务端代理 / 客户端直连 / 画质探测 / 定时录像）现在共用同一份规则，
+ * 所以这里显示的就是实际生效的那个 —— 不用再靠猜。
+ */
+async function explainUa(sourceId) {
+  try {
+    const r = await api('/ua/explain?sourceId=' + sourceId);
+    const rows = r.layers.map((l) => {
+      const mark = l.used ? '<b style="color:#5aa9ff">← 最终生效</b>' : '';
+      const val = l.value ? esc(l.value) : '<span style="color:#9aa7bd">（空）</span>';
+      return `<tr><td style="padding:2px 10px 2px 0;white-space:nowrap">${esc(l.label)}</td>`
+           + `<td style="padding:2px 0;word-break:break-all">${val}</td>`
+           + `<td style="padding:2px 0 2px 10px;white-space:nowrap">${mark}</td></tr>`;
+    }).join('');
+    const none = r.from === 'none';
+    $('uaModalBody').innerHTML =
+      `<p style="color:#9aa7bd;margin-top:0">源：${esc(r.sourceName || '-')}`
+      + `${r.channelName ? '　示例频道：' + esc(r.channelName) : ''}</p>`
+      + `<p style="color:#9aa7bd;word-break:break-all;margin-top:0">示例地址：${esc(r.rawUrl)}</p>`
+      + `<table style="width:100%">${rows}</table>`
+      + `<p style="margin-bottom:4px">最终使用的 UA：<b>${none ? '<span style="color:#fc8181">不带 UA</span>' : esc(r.ua)}</b></p>`
+      + `<p style="color:#9aa7bd;font-size:12px;margin-bottom:0">服务端代理、客户端直连、画质探测、定时录像四条路径都用这份规则，`
+      + `所以这里显示的就是实际生效的那个。想改就去对应的那一层改（源 UA 填在直播源列表里，全局 UA 在系统设置里）。</p>`;
+    $('uaModal').classList.add('show');
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function addSource() {
+  const name = $('srcName').value.trim();
+  const url = $('srcUrl').value.trim();
+  if (!name) { $('sourceMsg').textContent = '请填写名称'; $('sourceMsg').className = 'msg error'; return; }
+  $('sourceMsg').textContent = url ? '正在拉取并导入...' : '创建中...';
+  $('sourceMsg').className = 'msg';
+  try {
+    const r = await api('/sources', { method: 'POST', body: {
+      name, url, playMode: $('srcPlayMode').value, autoUpdate: $('srcAutoUpdate').value === '1',
+      ua: $('srcUa').value.trim(),
+    } });
+    $('sourceMsg').textContent = r.importedChannels !== undefined
+      ? `导入完成：新增 ${r.importedChannels} 频道 / ${r.importedUrls} 线路`
+      : '已创建空源';
+    $('sourceMsg').className = 'msg success';
+    $('srcName').value = ''; $('srcUrl').value = ''; $('srcUa').value = '';
+    loadSources();
+  } catch (e) { $('sourceMsg').textContent = e.message; $('sourceMsg').className = 'msg error'; loadSources(); }
+}
+
+async function updateSource(id, patch) {
+  try { await api('/sources/' + id, { method: 'PUT', body: patch }); }
+  catch (e) { alert(e.message); }
+  loadSources();
+}
+
+async function renameSource(id, oldName) {
+  const name = prompt('新的源名称', oldName);
+  if (!name || name === oldName) return;
+  await updateSource(id, { name });
+}
+
+async function refreshSource(id, btn) {
+  btn.textContent = '更新中...'; btn.disabled = true;
+  try {
+    const r = await api(`/sources/${id}/refresh`, { method: 'POST', body: {} });
+    $('sourceMsg').textContent = `刷新完成：新增 ${r.importedChannels} 频道 / ${r.importedUrls} 线路`;
+    $('sourceMsg').className = 'msg success';
+  } catch (e) { $('sourceMsg').textContent = e.message; $('sourceMsg').className = 'msg error'; }
+  loadSources();
+}
+
+async function delSource(id, name) {
+  if (!confirm(`删除源「${name}」？该源下的频道和线路会一并删除。`)) return;
+  const r = await api('/sources/' + id, { method: 'DELETE' });
+  $('sourceMsg').textContent = `已删除，连带移除 ${r.removedChannels} 个频道`;
+  $('sourceMsg').className = 'msg success';
+  loadSources();
+}
+
+async function fillChannelSelects() {
+  if (!channelsCache.length) channelsCache = await api('/channels');
+  const opts = channelsCache.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  $('epgChannelSel').innerHTML = opts;
+  $('recChannelSel').innerHTML = '<option value="">全部频道</option>' + opts;
+  $('taskChannel').innerHTML = opts;
+  $('epgDate').value = new Date().toISOString().slice(0, 10);
+}
+
+/* ================= 客户端更新 ================= */
+async function loadUpdates() {
+  try {
+    const r = await api('/updates');
+    const rows = r.list || [];
+    $('updList').innerHTML = rows.map((u) => `<tr>
+      <td>${u.id}</td>
+      <td>${esc(u.versionName)}</td>
+      <td>${u.versionCode}</td>
+      <td>${(u.size / 1048576).toFixed(1)} MB</td>
+      <td style="font-size:11px;color:#9aa7bd;word-break:break-all;max-width:200px">${esc((u.sha256 || '').slice(0, 16))}…</td>
+      <td style="max-width:240px;word-break:break-word">${esc(u.notes || '-')}</td>
+      <td><button class="btn small danger" onclick="deleteUpdate(${u.id})">删除</button></td>
+    </tr>`).join('') || '<tr><td colspan="7">还没有上传过更新包</td></tr>';
+    $('updMsg').textContent = rows.length ? `当前最新：v${rows[0].versionName}（保留最近 ${r.keep} 个版本）` : '';
+    $('updMsg').className = 'msg';
+  } catch (e) {
+    $('updMsg').textContent = e.message;
+    $('updMsg').className = 'msg error';
+  }
+}
+
+async function uploadUpdate(btn) {
+  const input = $('updFile');
+  if (!input.files || !input.files.length) {
+    $('updMsg').textContent = '请先选择一个 APK 文件';
+    $('updMsg').className = 'msg error';
+    return;
+  }
+  const file = input.files[0];
+  const form = new FormData();
+  form.append('file', file);
+  form.append('notes', $('updNotes').value.trim());
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '上传中…';
+  $('updMsg').textContent = `正在上传 ${file.name}（${(file.size / 1048576).toFixed(1)} MB）…`;
+  $('updMsg').className = 'msg';
+  try {
+    // 直接用 fetch 而不是 api()：api() 会强制 Content-Type: application/json，
+    // 而 multipart 必须让浏览器自己带 boundary
+    const resp = await fetch('/admin/api/updates', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    const data = await resp.json().catch(() => ({ code: resp.status, msg: 'bad response' }));
+    if (data.code !== 0) throw new Error(data.msg || ('error ' + data.code));
+    const u = data.data.update;
+    $('updMsg').textContent = `已发布 v${u.versionName}（versionCode ${u.versionCode}）`;
+    $('updMsg').className = 'msg success';
+    input.value = '';
+    $('updNotes').value = '';
+  } catch (e) {
+    $('updMsg').textContent = e.message;
+    $('updMsg').className = 'msg error';
+  }
+  btn.disabled = false;
+  btn.textContent = old;
+  loadUpdates();
+}
+
+async function deleteUpdate(id) {
+  if (!confirm('删除这个更新包？客户端将无法再下载它。')) return;
+  try {
+    await api('/updates/' + id, { method: 'DELETE' });
+    loadUpdates();
+  } catch (e) { alert(e.message); }
+}
+
+/* ================= 台标管理 ================= */
+let logoSources = [];          // 服务端登记的台标源
+let logoSourcesEnabled = [];   // 当前启用的源 id（顺序即探测优先级）
+
+async function loadLogoSources() {
+  try {
+    const r = await api('/logos/sources');
+    logoSources = r.sources || [];
+    logoSourcesEnabled = r.enabled || [];
+    renderLogoSources();
+  } catch (e) {
+    $('logoSourceList').innerHTML = `<span style="color:#fc8181">台标源加载失败：${esc(e.message)}</span>`;
+  }
+}
+
+function renderLogoSources() {
+  $('logoSourceList').innerHTML = logoSources.map((s) => `
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.5">
+      <input type="checkbox" data-logo-src="${esc(s.id)}" ${logoSourcesEnabled.includes(s.id) ? 'checked' : ''}
+             onchange="toggleLogoSource(this)" style="margin-top:3px">
+      <span><a href="${esc(s.page)}" target="_blank" style="color:#5aa9ff">${esc(s.label)}</a><span style="color:#9aa7bd"> — ${esc(s.desc)}</span></span>
+    </label>`).join('') || '<span style="color:#9aa7bd">没有可用的台标源</span>';
+}
+
+async function toggleLogoSource(el) {
+  const id = el.dataset.logoSrc;
+  const next = el.checked
+    ? [...new Set([...logoSourcesEnabled, id])]
+    : logoSourcesEnabled.filter((x) => x !== id);
+  // 一个都不选等于匹配接口必然报错，这里直接拦住并把勾还回去
+  if (next.length === 0) {
+    el.checked = true;
+    $('logoMsg').textContent = '至少要保留一个台标源';
+    $('logoMsg').className = 'msg error';
+    return;
+  }
+  try {
+    const r = await api('/logos/sources', { method: 'POST', body: { ids: next } });
+    logoSourcesEnabled = r.enabled || next;
+    $('logoMsg').textContent = `台标源已保存（${logoSourcesEnabled.length} 个）`;
+    $('logoMsg').className = 'msg success';
+  } catch (e) {
+    el.checked = !el.checked;   // 保存失败就回滚勾选状态
+    $('logoMsg').textContent = e.message;
+    $('logoMsg').className = 'msg error';
+  }
+}
+
+async function loadLogos() {
+  channelsCache = await api('/channels');
+  $('logoList').innerHTML = channelsCache.map((c) => `<tr>
+    <td>${c.id}</td>
+    <td>${c.logo ? `<img src="/api/client/logo/${c.id}?t=${Date.now()}" style="height:28px;max-width:80px;background:#fff;border-radius:4px;padding:2px" onerror="this.outerHTML='<span style=color:#fc8181>加载失败</span>'">` : '<span style="color:#9aa7bd">无</span>'}</td>
+    <td>${esc(c.name)}</td>
+    <td style="word-break:break-all;max-width:360px;font-size:12px;color:#9aa7bd">${esc(c.logo || '-')}</td>
+    <td><button class="btn small" data-act="set-logo" data-id="${c.id}" data-name="${esc(c.name)}" data-logo="${esc(c.logo || '')}">手动设置</button>
+        ${c.logo ? `<button class="btn small danger" onclick="clearChannelLogo(${c.id})">清除</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="5">暂无频道</td></tr>';
+}
+
+async function matchLogosOnline(btn) {
+  if (logoSourcesEnabled.length === 0) {
+    $('logoMsg').textContent = '请先勾选至少一个台标源';
+    $('logoMsg').className = 'msg error';
+    return;
+  }
+  btn.disabled = true; btn.textContent = '匹配中（约几分钟）...';
+  $('logoMsg').textContent = `正在按频道名到 ${logoSourcesEnabled.length} 个台标源里探测 ...`;
+  $('logoMsg').className = 'msg';
+  try {
+    const r = await api('/logos/match-online', { method: 'POST', body: {} });
+    const detail = (r.sources || []).map((id) => {
+      const s = logoSources.find((x) => x.id === id);
+      return `${s ? s.label : id} ${(r.bySource && r.bySource[id]) || 0}`;
+    }).join('，');
+    $('logoMsg').textContent = `匹配完成：待匹配 ${r.channelCount} 个频道，命中 ${r.matched} 个台标（${detail}）`;
+    $('logoMsg').className = 'msg success';
+  } catch (e) { $('logoMsg').textContent = e.message; $('logoMsg').className = 'msg error'; }
+  btn.disabled = false; btn.textContent = '在线匹配缺失台标';
+  loadLogos();
+}
+
+async function setChannelLogo(id, name, current) {
+  const url = prompt(`设置「${name}」的台标地址（http/https，留空并确定 = 清除）`, current || 'https://live.fanmingming.cn/tv/');
+  if (url === null) return;
+  try {
+    await api('/logos/set', { method: 'POST', body: { channelId: id, logo: url.trim() } });
+    loadLogos();
+  } catch (e) { alert(e.message); }
+}
+
+async function clearChannelLogo(id) {
+  if (!confirm('清除该频道台标？')) return;
+  await api('/logos/set', { method: 'POST', body: { channelId: id, logo: '' } });
+  loadLogos();
+}
+
+/* ================= 设备 ================= */
+async function loadDevices() {
+  const list = await api('/devices');
+  const pending = list.filter((d) => d.status === 'pending');
+  const approved = list.filter((d) => d.status === 'approved');
+  $('pendingDevices').innerHTML = pending.map((d) => `<tr>
+    <td>${esc(d.id)}</td><td>${esc(d.model)}</td><td>${esc(d.android_version)}</td><td>${fmtTime(d.created_at)}</td>
+    <td><button class="btn small primary" data-act="approve-device" data-id="${esc(d.id)}">通过</button>
+        <button class="btn small danger" data-act="reject-device" data-id="${esc(d.id)}">拒绝</button></td></tr>`).join('')
+    || '<tr><td colspan="5">暂无待审核设备</td></tr>';
+  $('approvedDevices').innerHTML = approved.map((d) => `<tr>
+    <td>${esc(d.id)}</td><td>${esc(d.model)}</td><td>${esc(d.android_version)}</td><td>${fmtTime(d.last_seen)}</td>
+    <td><button class="btn small danger" data-act="kick-device" data-id="${esc(d.id)}">踢出</button></td></tr>`).join('')
+    || '<tr><td colspan="5">暂无已绑定设备</td></tr>';
+}
+async function approveDevice(id) { await api(`/devices/${encodeURIComponent(id)}/approve`, { method: 'POST', body: {} }); loadDevices(); }
+async function rejectDevice(id) { await api(`/devices/${encodeURIComponent(id)}/reject`, { method: 'POST', body: {} }); loadDevices(); }
+async function kickDevice(id) { if (confirm('踢出该设备？其 token 将失效。')) { await api('/devices/' + encodeURIComponent(id), { method: 'DELETE' }); loadDevices(); } }
+
+/* ================= 录制 ================= */
+async function loadTasks() {
+  const list = await api('/record/tasks');
+  const nameOf = (cid) => { const c = channelsCache.find((x) => x.id === cid); return c ? c.name : '#' + cid; };
+  $('taskList').innerHTML = list.map((t) => `<tr>
+    <td>${t.id}</td><td>${esc(nameOf(t.channel_id))}</td>
+    <td>${t.mode === 'always' ? '全天候' : '每日定时'}</td>
+    <td>${t.mode === 'daily' ? esc(t.start_time) + ' ~ ' + esc(t.end_time) : '-'}</td>
+    <td>${t.retention_days}</td>
+    <td>${t.enabled ? '<span class="tag green">启用</span>' : '<span class="tag red">停用</span>'}</td>
+    <td><button class="btn small" onclick="toggleTask(${t.id}, ${t.enabled ? 0 : 1})">${t.enabled ? '停用' : '启用'}</button>
+        <button class="btn small" onclick="showTaskLog(${t.id})">日志</button>
+        <button class="btn small danger" onclick="delTask(${t.id})">删除</button></td></tr>`).join('')
+    || '<tr><td colspan="7">暂无录制任务</td></tr>';
+}
+async function showTaskLog(id) {
+  const list = await api('/record/tasks');
+  const t = list.find((x) => x.id === id);
+  const lines = (t && t.lastStderr) || [];
+  alert(lines.length ? lines.join('\n') : '这个任务还没有输出（可能没在录制，或 ffmpeg 一切正常没有输出）');
+}
+
+function openTaskModal() { toggleTaskTime(); $('taskModal').classList.add('show'); }
+function toggleTaskTime() { $('taskTimeRow').style.display = $('taskMode').value === 'daily' ? 'block' : 'none'; }
+async function saveTask() {
+  const body = {
+    channelId: parseInt($('taskChannel').value, 10),
+    mode: $('taskMode').value,
+    retentionDays: parseInt($('taskRetention').value, 10) || 7,
+    enabled: true,
+  };
+  if (body.mode === 'daily') { body.startTime = $('taskStart').value; body.endTime = $('taskEnd').value; }
+  await api('/record/tasks', { method: 'POST', body });
+  closeModal('taskModal'); loadTasks();
+}
+async function toggleTask(id, enabled) {
+  await api('/record/tasks/' + id, { method: 'PUT', body: { enabled: !!enabled } });
+  loadTasks();
+}
+async function delTask(id) { if (confirm('删除录制任务？已有录像不会被删除。')) { await api('/record/tasks/' + id, { method: 'DELETE' }); loadTasks(); } }
+
+async function loadRecordings() {
+  const cid = $('recChannelSel').value;
+  const date = $('recDate').value;
+  let q = [];
+  if (cid) q.push('channelId=' + cid);
+  if (date) q.push('date=' + date);
+  const list = await api('/recordings' + (q.length ? '?' + q.join('&') : ''));
+  const nameOf = (cid2) => { const c = channelsCache.find((x) => x.id === cid2); return c ? c.name : '#' + cid2; };
+  $('recordingList').innerHTML = list.map((r) => `<tr>
+    <td>${r.id}</td><td>${esc(nameOf(r.channel_id))}</td><td>${r.date}</td><td>${r.start}</td><td>${r.end}</td>
+    <td>${fmtBytes(r.size || 0)}</td>
+    <td style="word-break:break-all">${esc(r.file)}</td>
+    <td><a class="btn small" href="${esc(r.playUrl || ('/stream/record/' + r.id))}" target="_blank">播放</a>
+        <button class="btn small danger" onclick="delRecording(${r.id})">删除</button></td></tr>`).join('')
+    || '<tr><td colspan="8">暂无录像</td></tr>';
+}
+/** 录像体检：分片间隔中位数 vs 配置的分片长度；碎片化的频道直接标红 */
+async function loadRecStats() {
+  try {
+    const s = await api('/recordings/stats');
+    const bad = (s.channels || []).filter((c) => !c.healthy);
+    let html = `共 <b>${s.totalCount}</b> 个分片 / <b>${fmtBytes(s.totalBytes)}</b>` +
+      `　配置的分片长度：<b>${Math.round(s.expectedSegmentSec / 60)}</b> 分钟`;
+    if (bad.length) {
+      html += `<div style="color:#ffb4b4;margin-top:6px">⚠ <b>${bad.length}</b> 个频道的录像在碎片化` +
+        `（实际分片间隔远小于配置值，录像在反复重启、每片只录到一点点）：<br>` +
+        bad.slice(0, 8).map((c) => `　· ${esc(c.name)}：${c.count} 片，间隔中位 <b>${c.medianGapSec}</b> 秒`).join('<br>') +
+        `<br>这类录像的回看/时移时间轴会不准（时移会自动退回滚动缓冲）。</div>`;
+    }
+    $('recStats').innerHTML = html;
+    $('recSegMin').value = Math.round(s.expectedSegmentSec / 60);
+    $('recDir').value = s.recordDir || '';
+  } catch (e) { $('recStats').textContent = '体检失败：' + e.message; }
+}
+
+async function saveRecEncode(el) {
+  await api('/settings', { method: 'PUT', body: { recordEncode: el.value } });
+  alert('已保存：' + el.options[el.selectedIndex].text + '\n\n下一段录像开始生效，不用重启。\n（核显初始化失败时会自动退回 -c copy）');
+}
+
+async function loadRecEncode() {
+  try {
+    const s = await api('/settings');
+    $('recEncode').value = String(s.recordEncode || 'copy');
+  } catch (_) { /* 读不到就保持默认 */ }
+}
+
+async function saveRecDir() {
+  const v = $('recDir').value.trim();
+  if (v && !/^\/[^/]/.test(v)) return alert('请填绝对路径，例如 /vol1/1000/records');
+  if (!confirm('保存后需要到应用中心重启 MediaIptv 才生效。确定保存？')) return;
+  await api('/settings', { method: 'PUT', body: { recordDir: v } });
+  alert('已保存。请到应用中心重启 MediaIptv 生效。');
+}
+
+async function saveRecSegMin() {
+  const v = parseInt($('recSegMin').value, 10);
+  if (!(v >= 1 && v <= 720)) return alert('请填 1~720 之间的分钟数');
+  await api('/settings', { method: 'PUT', body: { recordSegmentMin: v } });
+  alert('已保存。注意：正在录制的任务要等下次重启才会用新的分片长度。');
+  loadRecStats();
+}
+
+async function bulkDelRecordings(mode) {
+  const cid = $('recChannelSel').value;
+  const date = $('recDate').value;
+  let url = '';
+  if (mode === 'channel') {
+    if (!cid) return alert('请先在上面的「频道」里选一个');
+    url = '/recordings/bulk?channelId=' + encodeURIComponent(cid);
+  } else {
+    if (!date) return alert('请先在上面的日期里选一天');
+    url = '/recordings/bulk?before=' + encodeURIComponent(date);
+  }
+  if (!confirm('确定批量删除？此操作不可恢复。')) return;
+  const r = await api(url, { method: 'DELETE' });
+  alert('已删除 ' + (r.removed || 0) + ' 条录像');
+  loadRecordings();
+  loadRecStats();
+}
+
+async function saveMergeSwitch(el) {
+  await api('/settings', { method: 'PUT', body: { mergeChannels: el.checked ? '1' : '0' } });
+  el.parentElement.style.color = el.checked ? '#7fd18b' : '#9aa7bd';
+  alert(el.checked
+    ? '已开启：导入/刷新订阅时会按 epgId 或归一化名字合并重复频道（线路合并）'
+    : '已关闭：导入/刷新订阅时每条都独立成频道，不再合并');
+}
+
+async function loadMergeSwitch() {
+  try {
+    const s = await api('/settings');
+    // 注意：GET /settings 会对值做 JSON.parse，拿到的可能是**数字** 0/1 而不是字符串 '0'。
+    // 原来写成 !== '0' 恒为真 —— 关掉开关后刷新又显示成开，用户以为没关成功。
+    const on = String(s.mergeChannels === undefined || s.mergeChannels === null ? '1' : s.mergeChannels) !== '0';
+    $('cfgMergeChannels').checked = on;
+    $('cfgMergeChannels').parentElement.style.color = on ? '#7fd18b' : '#9aa7bd';
+  } catch (_) { /* 读不到就保持默认勾选 */ }
+}
+
+async function mergeChannels() {
+  if (!confirm('把现有频道按 epgId / 归一化名字重新整合？\n\n重复的频道会并成一条（线路合并），多余的频道被删除。\n线路、录制任务、录像记录都会挪到保留的那个频道上。')) return;
+  const r = await api('/channels/merge', { method: 'POST' });
+  alert('已合并 ' + ((r && r.merged) || 0) + ' 个频道');
+  loadChannels();
+}
+
+async function delRecording(id) { if (confirm('删除该录像文件？')) { await api('/recordings/' + id, { method: 'DELETE' }); loadRecordings(); } }
+
+/* ================= 设置 ================= */
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(i ? 1 : 0) + ' ' + u[i];
+}
+function fmtDur(sec) {
+  if (sec == null) return '-';
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  if (d) return d + ' 天 ' + h + ' 小时';
+  if (h) return h + ' 小时 ' + m + ' 分';
+  if (m) return m + ' 分 ' + (sec % 60) + ' 秒';
+  return sec + ' 秒';
+}
+function fmtClock(sec) {
+  if (!sec) return '从未';
+  const d = new Date(sec * 1000);
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+
+/**
+ * 系统诊断：把服务端真实状态摊开。
+ * 只读，不改任何东西；有问题的项用红色标出来并给一句"这意味着什么"。
+ */
+async function loadDiagnostics() {
+  $('diagMsg').textContent = '读取中…';
+  let d;
+  try {
+    d = await api('/diagnostics');
+  } catch (e) {
+    $('diagMsg').textContent = '读取失败：' + e.message;
+    $('diagMsg').className = 'msg error';
+    return;
+  }
+  $('diagMsg').textContent = '';
+
+  const noFfmpeg = !d.tools.ffmpeg;
+  const sections = [
+    ['服务端', [
+      ['版本', d.server.version || '-'],
+      ['Node', d.server.node],
+      ['已运行', fmtDur(d.server.uptimeSec)],
+      ['数据目录', d.server.dataDir],
+      ['数据库大小', fmtBytes(d.server.dbSizeBytes)],
+    ]],
+    ['外部依赖', [
+      ['ffmpeg', d.tools.ffmpeg || '未找到',
+        noFfmpeg ? '没有它则时移、定时录像、组播源转封装全部不可用' : '时移 / 录像 / 组播转封装都依赖它', noFfmpeg],
+    ]],
+    ['硬件转码（H.265 / H.264）', [
+      ['/dev/dri/renderD128', d.hardware.driReadable ? '可访问' : '不可访问',
+        d.hardware.driReadable ? '' : '录像要调用核显压缩就必须先授权：应用中心 → MediaIptv → 访问权限 → 添加 /dev/dri' + (d.hardware.note ? '（' + d.hardware.note + '）' : ''), !d.hardware.driReadable],
+      ['hevc_qsv（Intel 核显）', d.hardware.hevcQsv ? '可用' : '不可用'],
+      ['hevc_vaapi（VAAPI）', d.hardware.hevcVaapi ? '可用' : '不可用'],
+      ['说明', (d.hardware.hevcQsv || d.hardware.hevcVaapi)
+        ? '可用：录像可以开启硬件压缩，体积比 -c copy 小很多'
+        : '两项都不可用时，录像只能 -c copy（原样存，不压缩）'],
+    ]],
+    ['直播源与频道', [
+      ['直播源', d.sources.total + ' 个（' + d.sources.autoUpdate + ' 个开了自动更新）'],
+      ['自己填了 UA 的源', d.sources.withOwnUa + ' 个',
+        d.sources.withOwnUa ? '其余走全局 UA 或地址内联，点直播源列表的「UA 诊断」看最终生效值' : '当前都走全局 UA 或地址内联'],
+      ['频道', d.channels.total + ' 个，分 ' + d.channels.groups + ' 组'],
+      ['未分组频道', d.channels.ungrouped + ' 个',
+        d.channels.ungrouped ? '这些不属于任何分组，客户端会单独显示为「未分组」一组（不会丢）' : '', false],
+    ]],
+    ['线路与画质探测', [
+      ['线路总数', d.urls.total],
+      ['探测成功', d.urls.probed + ' 条（有分辨率）'],
+      ['探测失败', d.urls.probeFailed + ' 条',
+        d.urls.probeFailed ? '这些通常是防盗链拒绝、离线或需要特殊 UA，可点频道行的「检测」复查' : '', d.urls.probeFailed > 0],
+      ['最近探测', d.urls.lastProbeAt ? fmtClock(d.urls.lastProbeAt) : '从未探测过'],
+    ]],
+    ['EPG', [
+      ['EPG 源', d.epg.sources + ' 个'],
+      ['节目条数', d.epg.programs.toLocaleString()],
+      ['每天 06:00 自动同步', d.epg.autoSync ? '开启' : '关闭', d.epg.autoSync ? '' : '关闭时只能手动同步'],
+    ]],
+    ['录像', [
+      ['录制任务', d.recording.tasks + ' 个'],
+      ['录像文件', d.recording.files + ' 个'],
+    ]],
+    ['时移', [
+      ['开关', d.timeshift.enabled ? '开启' : '关闭'],
+      ['窗口长度', d.timeshift.windowMin + ' 分钟（每 ' + d.timeshift.segmentSeconds + ' 秒一个分片）'],
+      ['ffmpeg', d.timeshift.ffmpegAvailable ? '可用' : '不可用', d.timeshift.ffmpegAvailable ? '' : '时移依赖 ffmpeg', !d.timeshift.ffmpegAvailable],
+      ['正在缓冲', d.timeshift.activeSessions.length
+        ? d.timeshift.activeSessions.map((x) => '线路 ' + x.channelUrlId + '（空闲 ' + Math.round(x.idleMs / 1000) + 's）').join('、')
+        : '没有客户端在用时移'],
+    ]],
+    ['直播源访问', [
+      ['流地址签名鉴权', d.stream.authEnabled ? '开启' : '关闭',
+        d.stream.authEnabled ? '' : '关闭后局域网内任何设备枚举 id 就能拉走直播源与录像', !d.stream.authEnabled],
+      ['默认播放模式', d.stream.playMode],
+      ['全局 UA', d.stream.globalUa || '（空，不携带）'],
+    ]],
+    ['台标', [
+      ['启用的在线台标源', (d.logo.enabledSources || []).join('、') || '无'],
+      ['已缓存台标', d.logo.cachedFiles + ' 个'],
+    ]],
+    ['设备与客户端', [
+      ['已绑定设备', d.devices.approved + ' 台'],
+      ['待审核设备', d.devices.pending + ' 台', d.devices.pending ? '有设备在等审核，客户端会一直显示"等待绑定"' : ''],
+      ['已发布的客户端包', d.appUpdates.published + ' 个'],
+    ]],
+  ];
+
+  let html = '';
+  for (const [title, rows] of sections) {
+    html += `<div class="group-block"><div class="group-title">${esc(title)}</div>
+      <table><tbody>${rows.map(([n, v, hint, bad]) => `<tr>
+        <td style="width:200px;color:#9aa7bd">${esc(n)}</td>
+        <td style="width:auto;${bad ? 'color:#fc8181;font-weight:600' : ''}">${esc(String(v))}</td>
+        <td style="color:#9aa7bd;font-size:12px">${hint ? esc(hint) : ''}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+  $('diagBody').innerHTML = html;
+}
+
+async function loadSettings() {
+  const s = await api('/settings');
+  const pc = s.playerConfig || {};
+  $('cfgEngine').value = pc.engine || 'exo';
+  $('cfgBuffer').value = pc.bufferMs || 5000;
+  $('cfgOffset').value = pc.liveOffsetMs || 3000;
+  $('cfgScale').value = pc.scaleMode || 'fit';
+  $('cfgAuto').value = String(!!pc.autoStart);
+  $('epgAuto').value = String(s.epgAutoSync === '1' || s.epgAutoSync === 1 ? '1' : '0');
+  $('cfgPlayMode').value = s.playMode || 'proxy';
+  $('cfgUa').value = s.streamUserAgent || '';
+  $('cfgStreamAuth').value = String(s.streamAuth === undefined ? '1' : s.streamAuth);
+  // GitHub 更新渠道（见设置页「客户端更新（GitHub）」）
+  $('cfgGhRepo').value = s.githubRepo || '';
+  $('cfgGhMirror').value = s.githubMirror || '';
+  $('cfgGhCode').value = s.githubVersionCode || '';
+  $('cfgGhToken').value = '';
+  $('cfgGhTokenHint').textContent = s.githubTokenSet
+    ? '已配置（留空＝不改动）'
+    : '留空＝不改动已保存的 token';
+  loadTimeshiftStatus();
+}
+
+/** 收集 GitHub 更新渠道的三个输入；token 只在填了新值时才带上（空串＝不改动） */
+function githubFormBody() {
+  const body = {
+    githubRepo: $('cfgGhRepo').value.trim(),
+    githubMirror: $('cfgGhMirror').value.trim(),
+    githubVersionCode: $('cfgGhCode').value.trim(),
+  };
+  const token = $('cfgGhToken').value.trim();
+  if (token) body.githubToken = token;
+  return body;
+}
+
+async function saveGithub() {
+  try {
+    await api('/settings', { method: 'PUT', body: githubFormBody() });
+    $('cfgGhToken').value = '';
+    await loadSettings();
+    $('ghMsg').textContent = '已保存';
+    $('ghMsg').className = 'msg success';
+  } catch (e) {
+    $('ghMsg').textContent = e.message;
+    $('ghMsg').className = 'msg error';
+  }
+}
+
+/**
+ * 保存并当场读一次 GitHub。
+ * 先保存再测试：测试读的是**已保存的配置**，否则改了仓库名却测的是旧值，很容易误判。
+ */
+async function testGithub() {
+  $('ghMsg').textContent = '正在读 GitHub…';
+  $('ghMsg').className = 'msg';
+  try {
+    await api('/settings', { method: 'PUT', body: githubFormBody() });
+    $('cfgGhToken').value = '';
+    const r = await api('/github/test');
+    $('ghMsg').textContent = (r.ok ? '✓ ' : '✗ ') + r.message;
+    $('ghMsg').className = 'msg ' + (r.ok ? 'success' : 'error');
+  } catch (e) {
+    $('ghMsg').textContent = e.message;
+    $('ghMsg').className = 'msg error';
+  }
+}
+
+/**
+ * 时移状态。除了开关和窗口，还把「正在跑的会话」列出来 ——
+ * 这样能直接看出到底有没有在缓冲，而不是靠猜。
+ */
+async function loadTimeshiftStatus() {
+  try {
+    const t = await api('/timeshift');
+    $('cfgTimeshift').value = t.enabled ? '1' : '0';
+    $('cfgTimeshiftWindow').value = t.windowMin;
+    const parts = [];
+    parts.push(t.ffmpegAvailable ? 'ffmpeg 可用' : '<b style="color:#fc8181">未找到 ffmpeg，时移不可用</b>');
+    if (!t.sessions.length) {
+      parts.push('当前没有客户端在用时移');
+    } else {
+      parts.push('正在缓冲 ' + t.sessions.length + ' 路：' +
+        t.sessions.map((x) =>
+          '线路 ' + x.channelUrlId + '（空闲 ' + Math.round(x.idleMs / 1000) + 's / 窗口 ' + x.windowMin + ' 分钟）'
+        ).join('、'));
+    }
+    $('timeshiftStatus').innerHTML = parts.join(' · ');
+    $('timeshiftStatus').className = 'msg';
+  } catch (e) {
+    $('timeshiftStatus').textContent = e.message;
+    $('timeshiftStatus').className = 'msg error';
+  }
+}
+
+async function saveTimeshiftSettings() {
+  const win = parseInt($('cfgTimeshiftWindow').value, 10);
+  if (!(win >= 5 && win <= 360)) {
+    $('timeshiftStatus').textContent = '窗口长度要在 5~360 分钟之间';
+    $('timeshiftStatus').className = 'msg error';
+    return;
+  }
+  await api('/settings', { method: 'PUT', body: {
+    timeshift: $('cfgTimeshift').value,
+    timeshiftWindowMin: win,
+  } });
+  $('timeshiftStatus').textContent = '时移配置已保存';
+  $('timeshiftStatus').className = 'msg success';
+  loadTimeshiftStatus();
+}
+
+async function stopTimeshift() {
+  const r = await api('/timeshift/stop', { method: 'POST' });
+  $('timeshiftStatus').textContent = '已停止 ' + (r.stopped || 0) + ' 个时移会话';
+  $('timeshiftStatus').className = 'msg success';
+  loadTimeshiftStatus();
+}
+async function saveStreamSettings() {
+  await api('/settings', { method: 'PUT', body: {
+    playMode: $('cfgPlayMode').value,
+    streamUserAgent: $('cfgUa').value.trim(),
+    streamAuth: $('cfgStreamAuth').value,
+  } });
+  $('settingsMsg').textContent = '直播源访问配置已保存';
+  $('settingsMsg').className = 'msg success';
+}
+async function startProbe(force) {
+  const r = await api('/sources/probe', { method: 'POST', body: { force } });
+  $('probeMsg').textContent = r.running ? `探测中 ${r.finished}/${r.total}` : '没有待探测的线路';
+  const t = setInterval(async () => {
+    const s = await api('/sources/probe');
+    $('probeMsg').textContent = s.running ? `探测中 ${s.finished}/${s.total}` : `完成 ${s.finished}/${s.total}`;
+    if (!s.running) clearInterval(t);
+  }, 3000);
+}
+async function saveSettings() {
+  await api('/settings', { method: 'PUT', body: { playerConfig: {
+    engine: $('cfgEngine').value,
+    bufferMs: parseInt($('cfgBuffer').value, 10) || 5000,
+    liveOffsetMs: parseInt($('cfgOffset').value, 10) || 3000,
+    scaleMode: $('cfgScale').value,
+    autoStart: $('cfgAuto').value === 'true',
+  } } });
+  $('settingsMsg').textContent = '播放配置已保存';
+  $('settingsMsg').className = 'msg success';
+}
+async function saveEpgAuto() {
+  const enabled = $('epgAuto').value === '1';
+  await api('/epg/auto', { method: 'POST', body: { enabled } });
+  $('settingsMsg').textContent = 'EPG 自动同步已' + (enabled ? '开启' : '关闭');
+  $('settingsMsg').className = 'msg success';
+}
+async function changePassword() {
+  try {
+    await api('/password', { method: 'POST', body: { oldPassword: $('oldPass').value, newPassword: $('newPass').value } });
+    $('settingsMsg').textContent = '密码已修改，下次登录请使用新密码';
+    $('settingsMsg').className = 'msg success';
+    $('oldPass').value = ''; $('newPass').value = '';
+  } catch (e) { $('settingsMsg').textContent = e.message; $('settingsMsg').className = 'msg error'; }
+}
+
+/* ================= 日志 ================= */
+async function loadLogs() {
+  const r = await api('/logs?tail=300');
+  $('logView').textContent = (r.lines || []).join('\n');
+  $('logView').scrollTop = $('logView').scrollHeight;
+}
+
+/* ================= 弹窗工具 ================= */
+function closeModal(id) { $(id).classList.remove('show'); }
+
+/* ================= 启动 ================= */
+if (token) {
+  // 校验 token 是否仍有效
+  api('/stats').then(enterApp).catch(() => logout());
+}
+</script>
+</body>
+</html>

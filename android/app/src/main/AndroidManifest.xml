@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 客户端自更新：下载完 APK 后要调起系统安装器。没有这条权限，
+         Android 8.0+ 上会直接抛 ActivityNotFoundException，表现为「点了没反应」 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- 后台保活：常驻前台服务。FOREGROUND_SERVICE 从 Android 9 起必填；
+         Android 14 起还要求按类型声明（本应用用的是 specialUse，见下面 service 节点） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13+ 常驻通知要运行时权限；没有它服务仍能跑，只是通知不显示 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 引导用户把本应用加入电池优化白名单：不做的话 Android 6.0+ 息屏后会被 Doze 限制 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- TV 特性声明：兼容触摸屏设备（开发调试） -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:banner="@drawable/app_banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MediaIptv"
+        android:usesCleartextTraffic="true"
+        tools:targetApi="34">
+        <!--
+          allowBackup=false：media_iptv_prefs 里存着设备 token 与服务器地址，
+          开启备份会被 adb backup / 云备份带出设备。
+          usesCleartextTraffic=true 是必要的：服务器地址由用户自行填写（局域网任意
+          IP:端口），networkSecurityConfig 只能按域名/固定 IP 列举，无法覆盖这种场景。
+        -->
+
+        <activity
+            android:name=".ui.player.MainActivity"
+            android:banner="@drawable/app_banner"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:hardwareAccelerated="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.MediaIptv.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:theme="@style/Theme.MediaIptv.SettingsPanel" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <!-- 只接收系统广播，无需对外暴露 -->
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- 覆盖安装（含自动更新）之后把常驻服务接回来 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          常驻前台服务：提高进程优先级，避免被系统回收。
+          Android 14 起前台服务必须声明类型，且启动时传的类型要和这里一致。
+          这里用 specialUse（而不是 mediaPlayback）：本服务只负责「让进程活着」，
+          播放仍由 Activity 里的播放器负责，声明成 mediaPlayback 是不诚实的。
+        -->
+        <service
+            android:name=".service.KeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="电视直播常驻：保持应用进程存活，避免被系统回收后无法继续播放" />
+        </service>
+
+        <!-- 闹钟触发的自恢复（划掉最近任务 / 服务被结束后拉起） -->
+        <receiver
+            android:name=".service.RestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- 15 分钟一次的看门狗；setPersisted 让它跨重启依然有效 -->
+        <service
+            android:name=".service.KeepAliveJobService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!--
+          自更新下载的 APK 在 cacheDir 下，必须通过 FileProvider 以 content:// 交给
+          系统安装器：Android 7.0+ 直接传 file:// 会抛 FileUriExposedException。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

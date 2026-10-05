@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的授权范围：只暴露 cacheDir/update/ 这一个目录。
+  自更新下载的 APK 放在这里，安装时以 content:// 交给系统安装器。
+
+  不要图省事写成 <external-path> 或 root-path：那等于把整个存储/整个私有目录
+  授权出去，任何拿到这个 authority 的应用都能读。
+-->
+<paths>
+    <cache-path
+        name="update"
+        path="update/" />
+</paths>

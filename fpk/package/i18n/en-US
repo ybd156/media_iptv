@@ -1,0 +1,37 @@
+[common]
+displayName="MediaIptv"
+desc="""<b>MediaIptv</b> TV live streaming server: M3U playlist management, EPG sync, stream proxy distribution, scheduled recording & catch-up, device binding and a web admin console."""
+[entry]
+title="MediaIptv"
+[install]
+stepTitle="MediaIptv Setup"
+helpText="Set the listening port and admin password. Leave the data directory blank to use the app's own persistent directory. To keep the database and recordings on another volume, first grant that folder to this app under App Settings → Access Permissions, then enter its full path here."
+dataDirLabel="Data directory (optional)"
+dataDirPlaceholder="Blank = app default; or an authorized path such as /vol2/media/iptv"
+portLabel="Port"
+passwordLabel="Admin password"
+passwordPlaceholder="Set a 6-64 character password; changeable later in the admin console"
+dataDirPatternMsg="Enter an absolute /vol path, or leave blank for the default"
+portRequiredMsg="Port is required"
+portPatternMsg="Port must be numeric"
+portRangeMsg="Invalid port range"
+passwordRequiredMsg="Password is required"
+passwordLengthMsg="Password must be 6-64 characters"
+[uninstall]
+stepTitle="Confirm uninstall"
+helpText="""<strong>You are uninstalling "MediaIptv"</strong>
+
+The service will be stopped and program files removed. Choose how to handle your config and recording data:"""
+dataOptionLabel="Data option"
+keepDataLabel="Keep data (recommended)"
+deleteDataLabel="Delete all data (unrecoverable)"
+selectionRequiredMsg="Please choose a data option"
+[config]
+stepTitle="MediaIptv Settings"
+helpText="Values set here override the running config and trigger a restart. Leave blank to keep current values."
+portLabel="New port"
+portPlaceholder="Leave blank to keep current"
+passwordLabel="New admin password"
+passwordPlaceholder="Leave blank to keep current"
+portPatternMsg="Port must be numeric"
+passwordLengthMsg="Password must be 6-64 characters"

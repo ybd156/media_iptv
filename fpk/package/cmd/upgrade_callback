@@ -1,0 +1,25 @@
+#!/bin/bash
+# 升级后回调：保留 var 数据，重新应用可执行位并重启服务。
+# 升级会替换 app/ 下的文件，新到达的 node_* / ui/*.cgi 可能是 0644，
+# 原实现只 restart 不 chmod，升级后可能直接起不来。
+set -u
+
+# TRIM_* 环境不带 PATH，显式导出（见飞牛官方模板 cmd/common）
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -z "${TRIM_APPDEST:-}" ]; then
+    if [ -d "${APP_ROOT}/app" ]; then
+        TRIM_APPDEST="${APP_ROOT}/app"
+    else
+        TRIM_APPDEST="/var/apps/mediaiptv/target"
+    fi
+fi
+
+chmod 755 "${TRIM_APPDEST}"/server/node_* 2>/dev/null || true
+chmod 755 "${SCRIPT_DIR}"/* 2>/dev/null || true
+chmod 755 "${TRIM_APPDEST}"/ui/*.cgi 2>/dev/null || true
+
+"${SCRIPT_DIR}/main" restart
+exit $?

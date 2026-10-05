@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 台标占位图：亮色底 + 播放符号，确保台标缺失/加载失败时在深色面板上可见 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:fillColor="#4A5568"
+        android:pathData="M4,4 h56 v56 h-56 z" />
+    <path
+        android:fillColor="#90CAF9"
+        android:pathData="M32,32 m-15,0 a15,15 0 1,1 30,0 a15,15 0 1,1 -30,0" />
+    <path
+        android:fillColor="#1A1D24"
+        android:pathData="M28,25 L28,39 L41,32 Z" />
+</vector>

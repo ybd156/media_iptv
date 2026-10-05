@@ -1,0 +1,14 @@
+appname             = mediaiptv
+version             = 1.11.16
+display_name        = "${common.displayName}"
+desc                = "${common.desc}"
+platform            = all
+source              = thirdparty
+maintainer          = MediaIptv
+maintainer_url      = https://github.com/example/mediaiptv
+distributor         = mediaiptv
+distributor_url     = https://github.com/example/mediaiptv
+desktop_uidir       = ui
+desktop_applaunchname = mediaiptv.Application
+reloadui            = yes
+ctl_stop            = true

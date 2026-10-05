@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OSD 悬浮卡片背景。
+
+  原来复用的是 bg_panel，而那个 drawable 的 corners radius 是 0dp —— 所以显示出来
+  是个直角黑条，很丑。这里单独做一个：半透明深色 + 18dp 圆角 + 极淡描边，
+  既有"浮在画面上"的层次感，又不会像纯黑块那样压住画面。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#D90A0E14" />
+    <corners android:radius="18dp" />
+    <stroke
+        android:width="1dp"
+        android:color="#26FFFFFF" />
+</shape>

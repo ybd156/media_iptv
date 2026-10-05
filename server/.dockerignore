@@ -1,0 +1,22 @@
+node_modules
+data
+*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+# 机密：COPY . . 会把它们直接烤进可分发镜像层，docker history 可提取
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.fpk
+# 本地验证脚本与编辑器残留
+_tmp*
+.tmp-verify
+test
+tests
+.vscode
+.idea
