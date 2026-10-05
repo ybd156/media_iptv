@@ -62,19 +62,39 @@ function isValidRepo(repo) {
 
 /**
  * 从 Release 正文里抠出发布脚本写进去的元数据行。
+ *
+ * 两个坑，都是实测踩出来的：
+ *
+ * 1. **必须在元数据块里找，而不是整篇正文里找。** 更新说明里完全可能出现
+ *    `sha256: ...` 这样的字眼（比如"这一版的做法"里举了个例子），整篇正则一抓就抓错。
+ *    所以发布脚本把元数据包在 `<!-- mediaiptv-meta ... -->` 里，这里优先只看这个块。
+ *
+ * 2. **没有块时要取最后一个匹配，而不是第一个。** 已经发出去的 Release 正文里
+ *    可能既有说明中的示例、又有末尾追加的真实值 —— 取第一个就会把示例当成真值，
+ *    客户端下载后 sha256 校验失败、装不上。脚本总是把元数据追加在末尾，
+ *    所以"最后一个"才是对的。
+ *
  * @returns {{versionCode:number, sha256:string, notes:string}}
  */
 function parseMeta(body) {
   const text = String(body || '');
+  const block = /<!--\s*mediaiptv-meta\s*([\s\S]*?)-->/i.exec(text);
+  const scope = block ? block[1] : text;
+
   const pick = (name) => {
-    const m = new RegExp(`^\\s*${name}\\s*[:=]\\s*(\\S+)\\s*$`, 'mi').exec(text);
-    return m ? m[1] : '';
+    const re = new RegExp(`^\\s*${name}\\s*[:=]\\s*(\\S+)\\s*$`, 'gmi');
+    let m;
+    let last = '';
+    while ((m = re.exec(scope)) !== null) last = m[1];
+    return last;
   };
+
   return {
     versionCode: parseInt(pick('versionCode'), 10) || 0,
     sha256: pick('sha256').toLowerCase(),
-    // 给客户端展示的说明：去掉那几行机器可读的元数据
+    // 给客户端展示的说明：去掉元数据块本身，以及散落在正文里的元数据行
     notes: text
+      .replace(/<!--\s*mediaiptv-meta\s*[\s\S]*?-->/gi, '')
       .split('\n')
       .filter((l) => !/^\s*(versionCode|sha256|size)\s*[:=]/i.test(l))
       .join('\n')

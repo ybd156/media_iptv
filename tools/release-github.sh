@@ -104,7 +104,11 @@ else
     BODY_NOTES="（没有 RELEASE_NOTES.md，只发元数据）"
 fi
 
-BODY="$(printf '%s\n\n---\nversionCode: %s\nsha256: %s\nsize: %s\n' "$BODY_NOTES" "$VER_CODE" "$SHA" "$SIZE")"
+# 元数据用 HTML 注释包起来。原因：更新说明里完全可能出现 `sha256: ...` 这种字眼
+# （实测 1.11.16 的说明里就举了个例子），服务端整篇正则一抓就抓到示例、抓不到真值，
+# 客户端下载后 sha256 校验失败、装不上。注释块让"哪几行是给机器读的"没有歧义。
+BODY="$(printf '%s\n\n<!-- mediaiptv-meta\nversionCode: %s\nsha256: %s\nsize: %s\n-->\n' \
+    "$BODY_NOTES" "$VER_CODE" "$SHA" "$SIZE")"
 
 echo "==> 发布到 GitHub Release"
 echo "    仓库      : $GITHUB_REPO"
@@ -165,6 +169,9 @@ fi
 HAVE="$(GH "$API/repos/$GITHUB_REPO/releases/$REL_ID/assets?per_page=100" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{for(const a of JSON.parse(s))console.log([a.id,a.name,a.size,a.state].join("\t"))}catch(_){}})')"
 
+# 上传单个资产。成功返回 0，失败返回 1（**不直接退出**）——
+# 由调用方决定这个资产是不是"非有不可"：APK 是客户端更新的必需品，失败必须中止；
+# fpk 有 90MB+，网络差时传不上去是常事，不该把已经传好的 APK 一起判死刑。
 upload_asset() {
     local file="$1" ctype="$2" name want line id size state
     name="$(basename "$file")"
@@ -179,24 +186,34 @@ upload_asset() {
             return 0
         fi
         echo "    远端 $name 是半成品（state=$state / size=$size，本地是 $want），先删掉残骸"
-        GH -X DELETE "$API/repos/$GITHUB_REPO/releases/assets/$id" >/dev/null \
-            || die "删除半成品资产失败（id=$id）"
+        GH -X DELETE "$API/repos/$GITHUB_REPO/releases/assets/$id" >/dev/null || return 1
     fi
     echo "==> 上传 $name（$(numfmt --to=iec "$want" 2>/dev/null || echo "${want}B")）..."
-    GH -X POST "$UPLOAD/repos/$GITHUB_REPO/releases/$REL_ID/assets?name=$name" \
-       -H "Content-Type: $ctype" \
-       --data-binary @"$file" >/dev/null \
-       || die "上传 $name 失败（网络中断可重跑本脚本：会删掉残骸再补传）"
-    echo "    上传完成"
+    if GH -X POST "$UPLOAD/repos/$GITHUB_REPO/releases/$REL_ID/assets?name=$name" \
+          -H "Content-Type: $ctype" \
+          --data-binary @"$file" >/dev/null; then
+        echo "    上传完成"
+        return 0
+    fi
+    echo "    上传中断"
+    return 1
 }
 
-upload_asset "$APK" "application/vnd.android.package-archive"
+upload_asset "$APK" "application/vnd.android.package-archive" \
+    || die "APK 上传失败 —— 客户端更新依赖它，必须成功。网络恢复后重跑本脚本即可（会接着补传）"
 
 # 同版本的服务端安装包（fpk）一并挂上去：GitHub Release 就是完整的发布记录，
-# 换机器重装时不用再回头找构建产物。没有就跳过，不影响客户端更新。
+# 换机器重装时不用再回头找构建产物。
+# **失败只警告，不中止**：fpk 有 90MB 上下，实测在受限网络里每次传到 60MB 左右就被重置
+# （限速到 1MB/s 也一样）。它不影响客户端更新，没必要把已经传好的 APK 一起判死刑。
 FPK="$DIST/mediaiptv_all_v${VERSION}.fpk"
 if [ -f "$FPK" ]; then
-    upload_asset "$FPK" "application/octet-stream"
+    if ! upload_asset "$FPK" "application/octet-stream"; then
+        echo
+        echo "    ⚠️ 服务端安装包没能传上去（$(numfmt --to=iec "$(stat -c %s "$FPK")" 2>/dev/null || echo "大文件")）。"
+        echo "       APK 已经传好，客户端更新不受影响。服务端安装包可以直接用本地 dist/ 里的那个，"
+        echo "       或者换到网络稳定的环境重跑本脚本（会只补传缺的这个，不会重复传 APK）。"
+    fi
 else
     echo "    （dist/ 里没有 mediaiptv_all_v${VERSION}.fpk，只发了 APK）"
 fi
