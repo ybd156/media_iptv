@@ -368,4 +368,4 @@ function warm(files) {
   })();
 }
 
-module.exports = { chunksOf, peek, warm, vodPlaylist, clearCache, hasIndex, CHUNK_SECONDS, OPEN_TTL_MS };
+module.exports = { chunksOf, peek, warm, vodPlaylist, clearCache, hasIndex, fileDuration, CHUNK_SECONDS, OPEN_TTL_MS };

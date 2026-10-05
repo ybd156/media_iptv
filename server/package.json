@@ -1,6 +1,6 @@
 {
   "name": "media-iptv-server",
-  "version": "1.11.17",
+  "version": "1.11.18",
   "description": "Private IPTV live streaming management server (M3U + EPG + recording) for LAN Android TV clients",
   "main": "src/index.js",
   "private": true,

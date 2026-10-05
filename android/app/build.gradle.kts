@@ -64,7 +64,7 @@ android {
         //                服务端新增「从 GitHub Release 读版本并下发」的更新渠道）
         // 1.11.17 -> 73（去掉 ijkplayer 与全部商业 SDK：APK 22.6MB → 3.3MB；
         //                服务端时移统一为"录像窗口"、索引扫描改异步不再阻塞事件循环）
-        versionCode = 73
+        versionCode = 74
         versionName = manifestVersion
 
         ndk {

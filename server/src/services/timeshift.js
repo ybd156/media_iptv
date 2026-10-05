@@ -65,6 +65,14 @@ function hasRecordings(db, channelId) {
 /** 判定结果缓存：录像是否可用，不必每次请求都去探 */
 const usableCache = new Map(); // channelId -> { at, ok }
 const USABLE_TTL_MS = 60_000;
+/**
+ * 只剩一条录像时，它至少要已经录了这么久才提供时移（秒）。
+ *
+ * 为什么要这条：用户在后台清理录像后，库里只剩"正在录的那一片"，
+ * 如果这时候一律判不可用，用户会看到"删完录像时移就废了"。
+ * 60 秒是能拖动的最短长度 —— 再短的话进度条几乎没有可拖范围，不如不给。
+ */
+const MIN_SINGLE_RECORDING_SEC = 60;
 
 /**
  * 录像能不能当时间轴用。
@@ -122,6 +130,22 @@ async function recordingsUsable(db, channelId) {
       if (!ok) {
         logger.warn(`[timeshift] channel #${channelId} 的录像不可靠（最近已完成分片最长 ${best.toFixed(1)}s，配置 ${expected}s），不提供时移`);
       }
+    } else if (rows.length === 1) {
+      // 只有一条录像：刚在后台清理过录像、或录像任务刚恢复。
+      //
+      // 这一段必须单独处理。上面的逻辑刻意**跳过最新那一片**（它还在写，时长不完整），
+      // 所以只剩一条时什么都判不了 → 直接判"不可用"。线上后果很直观：
+      // 用户在后台点了「批量删除录像」，时移就整个没了，要等录像重新攒够两片
+      // （默认 5 分钟一片 → 约 10 分钟）才恢复。而在用户看来"删录像"和"时移不能用"
+      // 是两件不相干的事，只会觉得时移坏了。
+      //
+      // 判据改成看这个文件**已经录了多久**：够拖一段就提供时移，窗口就是这一段。
+      const recordIndex = require('./recordIndex');
+      const file = path.join(config.RECORD_DIR, rows[0].file);
+      let dur = 0;
+      try { dur = await recordIndex.fileDuration(file); } catch (_) { dur = 0; }
+      ok = dur >= MIN_SINGLE_RECORDING_SEC;
+      logger.info(`[timeshift] channel #${channelId} 只有 1 条录像（已录 ${dur.toFixed(0)}s）→ ${ok ? '提供时移' : '暂不提供时移'}`);
     }
   } catch (_) { ok = false; }
   usableCache.set(channelId, { at: Date.now(), ok });
