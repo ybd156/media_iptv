@@ -78,8 +78,17 @@ function isValidRepo(repo) {
  */
 function parseMeta(body) {
   const text = String(body || '');
-  const block = /<!--\s*mediaiptv-meta\s*([\s\S]*?)-->/i.exec(text);
-  const scope = block ? block[1] : text;
+
+  // 取**最后一个**元数据块 —— 这个"最后"是必须的，不是保守起见：
+  // 本项目的 RELEASE_NOTES 里先后写过两次"元数据长什么样"的示例，
+  // 一次是 `sha256: f4209714…`、一次是 `<!-- mediaiptv-meta … -->`，
+  // 两次都被解析器当成了真值（第二次连注释块的定界符一起被匹配走，捕获到的只有" …"）。
+  // 发布脚本总是把真正的元数据放在正文末尾，所以"最后一个"才是对的。
+  let block = null;
+  const blockRe = /<!--\s*mediaiptv-meta\s*([\s\S]*?)-->/gi;
+  let bm;
+  while ((bm = blockRe.exec(text)) !== null) block = bm[1];
+  const scope = block !== null ? block : text;
 
   const pick = (name) => {
     const re = new RegExp(`^\\s*${name}\\s*[:=]\\s*(\\S+)\\s*$`, 'gmi');
@@ -92,7 +101,7 @@ function parseMeta(body) {
   return {
     versionCode: parseInt(pick('versionCode'), 10) || 0,
     sha256: pick('sha256').toLowerCase(),
-    // 给客户端展示的说明：去掉元数据块本身，以及散落在正文里的元数据行
+    // 给客户端展示的说明：去掉所有元数据块，以及散落在正文里的元数据行
     notes: text
       .replace(/<!--\s*mediaiptv-meta\s*[\s\S]*?-->/gi, '')
       .split('\n')
